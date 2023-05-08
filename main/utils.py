@@ -88,6 +88,19 @@ def get_tracks(link: str, type: str = None) -> list:
         ]
 
 
+def get_saved_tracks() -> None:
+    """Gets a list of liked songs"""
+
+    limit = 20
+    total = spotify.current_user_saved_tracks()["total"]
+
+    return [
+        j['track']['id']
+        for i in range(0, total, limit)
+        for j in spotify.current_user_saved_tracks(limit=limit, offset=i)["items"]
+    ]
+
+
 def remove_songs(playlist_id: str, ids: list, size: int = 100) -> None:
     print("Removing songs...", end=" -> ")
 

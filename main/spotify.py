@@ -64,15 +64,47 @@ def shuffle_all_my_playlists(ignored=None) -> None:
         shuffle_tracks(playlist)
 
 
-function = {1: mix_playlists, 2: shuffle_tracks, 3: shuffle_all_my_playlists}
+def saved_tracks_to_playlist(data: dict = None) -> None:
+    """ Adds all user liked songs to playlist of choice
+    `dict`: Playlist object"""
+
+    ids = get_saved_tracks()
+    print(f"Found {len(ids)} songs in your liked tracks")
+    if not data:
+        data = spotify.playlist(input('\nEnter playlist ID or link: '))
+
+    add_songs(data['id'], ids)
+
+
+def remove_saved_tracks(ids=None) -> None:
+    """ Removes all the user liked tracks
+    `ids`: List of tracks to remove from the saved tracks:
+    """
+
+    ids = ids or get_saved_tracks()
+    print(f"Found {len(ids)} tracks.")
+    id_chunks = split_chunks(ids, 50)
+    confirmation = input("Do you wish to delete (yes/no): ")
+
+    for ids in id_chunks:
+        spotify.current_user_saved_tracks_delete(
+            tracks=ids) if 'y' in confirmation else print("Process terminated!")
+    print("Removed all saved tracks.")
+
+
+function = {1: mix_playlists, 2: shuffle_tracks,
+            3: shuffle_all_my_playlists, 4: saved_tracks_to_playlist, 5: remove_saved_tracks}
 option = 1
 while option:
     """Simple input Menu"""
 
     option = input("""
-    1. Mix playlists(Required playlists to get tracks, a playlist(own/collaberative) to add songs.)
-    2. Shuffle tracks in playlist(Note: Removes and Re-adds songs doesn't reorder
+    1. Mix playlists (Required playlists to get tracks, a playlist[own | collaberative] to add songs.)
+    2. Shuffle tracks in playlist (Note: Removes and Re-adds songs doesn't reorder)
     3. Shuffle all your playlists at once
+    4. Add all liked songs to playlist
+    5. Remove tracks from liked sogns
+
     Select number only! Press Enter to quit.
 
     Enter option number: """)
