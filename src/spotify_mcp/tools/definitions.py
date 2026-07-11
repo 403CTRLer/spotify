@@ -5,6 +5,7 @@ Exceptions propagate - FastMCP converts them into isError results, and
 AuthError messages tell the model/user to run `spotify-mcp auth`.
 """
 
+from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any
 
@@ -22,7 +23,7 @@ def get_service() -> SpotifyService:
     return SpotifyService(repo, recovery_dir=settings.recovery_dir)
 
 
-def _page(page: dict[str, Any]) -> dict[str, Any]:
+def _page(page: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "total": page["total"],
         "offset": page["offset"],
@@ -38,7 +39,13 @@ def user_profile() -> dict[str, Any]:
 def currently_playing() -> dict[str, Any] | str:
     """Get the currently playing track, or a message when nothing is playing."""
     now = get_service().currently_playing()
-    return now if now else "Nothing is playing."
+    if not now:
+        return "Nothing is playing."
+    return {
+        "is_playing": now["is_playing"],
+        "progress_ms": now["progress_ms"],
+        "track": now["track"].model_dump(),
+    }
 
 
 def playlists(limit: int = 50, offset: int = 0) -> dict[str, Any]:
@@ -81,7 +88,10 @@ def library_tracks(limit: int = 50, offset: int = 0) -> dict[str, Any]:
 
 def recent_history(limit: int = 20) -> list[dict[str, Any]]:
     """List recently played tracks with played_at timestamps (max 50)."""
-    return get_service().recently_played(limit)
+    return [
+        {"played_at": item["played_at"], "track": item["track"].model_dump()}
+        for item in get_service().recently_played(limit)
+    ]
 
 
 ALL_TOOLS = [

@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from typing import Any, Protocol
 
 from spotify_mcp.client.api_client import SpotifyApiClient
-from spotify_mcp.models.schemas import Playlist, Track, User
+from spotify_mcp.models.schemas import NowPlaying, Page, PlayedItem, Playlist, Track, User
 
 PLAYLIST_CHUNK = 100  # Spotify limit for playlist item writes
 SAVED_CHUNK = 50  # Spotify limit for saved-track writes
@@ -16,13 +16,13 @@ class SpotifyRepository(Protocol):
     """Provider-facing data access. Services depend on this, never on HTTP."""
 
     def me(self) -> User: ...
-    def currently_playing(self) -> dict[str, Any] | None: ...
-    def my_playlists(self, limit: int = 50, offset: int = 0) -> dict[str, Any]: ...
+    def currently_playing(self) -> NowPlaying | None: ...
+    def my_playlists(self, limit: int = 50, offset: int = 0) -> Page[Playlist]: ...
     def all_my_playlists(self) -> list[Playlist]: ...
     def get_playlist(self, playlist_id: str) -> Playlist: ...
     def playlist_items(
         self, playlist_id: str, limit: int = 100, offset: int = 0
-    ) -> dict[str, Any]: ...
+    ) -> Page[Track]: ...
     def all_playlist_uris(self, playlist_id: str) -> tuple[list[str], list[str]]: ...
     def album_track_uris(self, album_id: str) -> list[str]: ...
     def search(self, query: str, types: Sequence[str], limit: int = 10) -> dict[str, Any]: ...
@@ -32,10 +32,10 @@ class SpotifyRepository(Protocol):
     def add_items(self, playlist_id: str, uris: Sequence[str]) -> int: ...
     def remove_items(self, playlist_id: str, uris: Sequence[str]) -> int: ...
     def replace_items(self, playlist_id: str, uris: Sequence[str]) -> None: ...
-    def saved_tracks(self, limit: int = 50, offset: int = 0) -> dict[str, Any]: ...
+    def saved_tracks(self, limit: int = 50, offset: int = 0) -> Page[Track]: ...
     def all_saved_ids(self) -> list[str]: ...
     def remove_saved(self, track_ids: Sequence[str]) -> int: ...
-    def recently_played(self, limit: int = 20) -> list[dict[str, Any]]: ...
+    def recently_played(self, limit: int = 20) -> list[PlayedItem]: ...
 
 
 class SpotifyApiRepository:
@@ -47,17 +47,17 @@ class SpotifyApiRepository:
     def me(self) -> User:
         return User.model_validate(self._client.get("/me"))
 
-    def currently_playing(self) -> dict[str, Any] | None:
+    def currently_playing(self) -> NowPlaying | None:
         data = self._client.get("/me/player/currently-playing")
         if not data or not data.get("item"):
             return None
         return {
             "is_playing": bool(data.get("is_playing")),
             "progress_ms": data.get("progress_ms"),
-            "track": Track.from_api(data["item"]).model_dump(),
+            "track": Track.from_api(data["item"]),
         }
 
-    def my_playlists(self, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    def my_playlists(self, limit: int = 50, offset: int = 0) -> Page[Playlist]:
         data = self._client.get("/me/playlists", limit=limit, offset=offset)
         return {
             "total": data.get("total", 0),
@@ -71,7 +71,7 @@ class SpotifyApiRepository:
     def get_playlist(self, playlist_id: str) -> Playlist:
         return Playlist.from_api(self._client.get(f"/playlists/{playlist_id}"))
 
-    def playlist_items(self, playlist_id: str, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    def playlist_items(self, playlist_id: str, limit: int = 100, offset: int = 0) -> Page[Track]:
         data = self._client.get(f"/playlists/{playlist_id}/tracks", limit=limit, offset=offset)
         return {
             "total": data.get("total", 0),
@@ -150,7 +150,7 @@ class SpotifyApiRepository:
         for chunk in _chunks(rest, PLAYLIST_CHUNK):
             self._client.post(f"/playlists/{playlist_id}/tracks", json={"uris": list(chunk)})
 
-    def saved_tracks(self, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    def saved_tracks(self, limit: int = 50, offset: int = 0) -> Page[Track]:
         data = self._client.get("/me/tracks", limit=limit, offset=offset)
         return {
             "total": data.get("total", 0),
@@ -175,13 +175,10 @@ class SpotifyApiRepository:
             self._client.delete("/me/tracks", json={"ids": list(chunk)})
         return len(track_ids)
 
-    def recently_played(self, limit: int = 20) -> list[dict[str, Any]]:
+    def recently_played(self, limit: int = 20) -> list[PlayedItem]:
         data = self._client.get("/me/player/recently-played", limit=min(limit, 50)) or {}
         return [
-            {
-                "played_at": item.get("played_at"),
-                "track": Track.from_api(item["track"]).model_dump(),
-            }
+            {"played_at": item.get("played_at"), "track": Track.from_api(item["track"])}
             for item in data.get("items") or []
             if item and item.get("track")
         ]

@@ -1,8 +1,17 @@
-from typing import Any
+from typing import Any, TypedDict
 
 from pydantic import BaseModel, Field
 
 from spotify_mcp.utils.links import to_uri
+
+
+class Page[T](TypedDict):
+    """One page of a listing endpoint. `total` is the remote total, which can
+    exceed len(items) when null/local entries were filtered out."""
+
+    total: int
+    offset: int
+    items: list[T]
 
 
 class User(BaseModel):
@@ -58,3 +67,14 @@ class Playlist(BaseModel):
             total_tracks=(item.get("tracks") or {}).get("total") or 0,
             description=item.get("description") or None,
         )
+
+
+class NowPlaying(TypedDict):
+    is_playing: bool
+    progress_ms: int | None
+    track: Track
+
+
+class PlayedItem(TypedDict):
+    played_at: str | None
+    track: Track

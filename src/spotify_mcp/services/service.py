@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from spotify_mcp.exceptions.errors import ApiError, LocalTracksError
-from spotify_mcp.models.schemas import Playlist, User
+from spotify_mcp.models.schemas import NowPlaying, Page, PlayedItem, Playlist, Track, User
 from spotify_mcp.repository.spotify import SpotifyRepository
 from spotify_mcp.utils.links import parse_ref, to_uri
 
@@ -34,16 +34,16 @@ class SpotifyService:
             self._me = self._repo.me()
         return self._me
 
-    def currently_playing(self) -> dict[str, Any] | None:
+    def currently_playing(self) -> NowPlaying | None:
         return self._repo.currently_playing()
 
-    def my_playlists(self, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    def my_playlists(self, limit: int = 50, offset: int = 0) -> Page[Playlist]:
         return self._repo.my_playlists(limit, offset)
 
     def all_playlists(self) -> list[Playlist]:
         return self._repo.all_my_playlists()
 
-    def playlist_items(self, ref: str, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    def playlist_items(self, ref: str, limit: int = 100, offset: int = 0) -> Page[Track]:
         _, playlist_id = parse_ref(ref, "playlist")
         return self._repo.playlist_items(playlist_id, limit, offset)
 
@@ -52,10 +52,10 @@ class SpotifyService:
     ) -> dict[str, Any]:
         return self._repo.search(query, types, limit)
 
-    def saved_tracks(self, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    def saved_tracks(self, limit: int = 50, offset: int = 0) -> Page[Track]:
         return self._repo.saved_tracks(limit, offset)
 
-    def recently_played(self, limit: int = 20) -> list[dict[str, Any]]:
+    def recently_played(self, limit: int = 20) -> list[PlayedItem]:
         return self._repo.recently_played(limit)
 
     # -- writes ---------------------------------------------------------------

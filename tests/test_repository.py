@@ -86,6 +86,21 @@ def test_currently_playing_none_on_204():
     assert repo.currently_playing() is None
 
 
+def test_currently_playing_returns_track_model():
+    # review #7: envelopes carry live models until the tool boundary
+    payload = {
+        "is_playing": True,
+        "progress_ms": 1234,
+        "item": {"id": "x" * 22, "name": "Song", "uri": "spotify:track:" + "x" * 22},
+    }
+    repo = make_repo(lambda request: httpx.Response(200, json=payload))
+    now = repo.currently_playing()
+    assert now is not None
+    assert now["is_playing"] is True
+    assert isinstance(now["track"], Track)
+    assert now["track"].name == "Song"
+
+
 def test_search_filters_null_items():
     payload = {
         "tracks": {"items": [{"id": "t", "name": "Song", "uri": "u"}, None]},

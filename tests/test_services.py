@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 
 from spotify_mcp.exceptions.errors import ApiError, LocalTracksError
-from spotify_mcp.models.schemas import Playlist, User
+from spotify_mcp.models.schemas import NowPlaying, Page, PlayedItem, Playlist, Track, User
 from spotify_mcp.services.service import SpotifyService
 
 ME = "m" * 22
@@ -39,10 +39,10 @@ class FakeRepo:
     def me(self) -> User:
         return User(id=ME, display_name="Tester")
 
-    def currently_playing(self) -> dict[str, Any] | None:
+    def currently_playing(self) -> NowPlaying | None:
         return None
 
-    def my_playlists(self, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    def my_playlists(self, limit: int = 50, offset: int = 0) -> Page[Playlist]:
         items = list(self.playlists.values())[offset : offset + limit]
         return {"total": len(self.playlists), "offset": offset, "items": items}
 
@@ -52,7 +52,7 @@ class FakeRepo:
     def get_playlist(self, playlist_id: str) -> Playlist:
         return self.playlists[playlist_id]
 
-    def playlist_items(self, playlist_id: str, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    def playlist_items(self, playlist_id: str, limit: int = 100, offset: int = 0) -> Page[Track]:
         return {"total": len(self.playlist_uris[playlist_id]), "offset": offset, "items": []}
 
     def all_playlist_uris(self, playlist_id: str) -> tuple[list[str], list[str]]:
@@ -88,7 +88,7 @@ class FakeRepo:
             self.on_replace(playlist_id, uris)
         self.playlist_uris[playlist_id] = list(uris)
 
-    def saved_tracks(self, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    def saved_tracks(self, limit: int = 50, offset: int = 0) -> Page[Track]:
         return {"total": len(self.saved_ids), "offset": offset, "items": []}
 
     def all_saved_ids(self) -> list[str]:
@@ -100,7 +100,7 @@ class FakeRepo:
         self.saved_ids = [i for i in self.saved_ids if i not in doomed]
         return len(track_ids)
 
-    def recently_played(self, limit: int = 20) -> list[dict[str, Any]]:
+    def recently_played(self, limit: int = 20) -> list[PlayedItem]:
         return []
 
 
