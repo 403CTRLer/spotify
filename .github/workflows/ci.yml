@@ -9,11 +9,13 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      # actions pinned to commit SHAs (review #8); comment tracks the tag
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           python-version: "3.12"
-      - run: uv sync --dev
+      # --frozen: fail on lockfile drift instead of silently re-resolving
+      - run: uv sync --frozen --dev
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pyright
@@ -24,7 +26,7 @@ jobs:
     steps:
       # shallow checkout on purpose: scans the pushed state, not the pre-rewrite
       # history (the legacy branch intentionally preserves a rotated credential)
-      - uses: actions/checkout@v4
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
