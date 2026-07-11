@@ -7,6 +7,55 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-12
+
+Production-readiness release: playback support, full API audit, destructive
+MCP tools behind a confirm protocol, and the remaining reliability debt paid.
+
+### Action required
+
+- **Re-run `spotify-mcp auth`**: scopes grew from 8 to 11
+  (`user-read-playback-state`, `user-modify-playback-state`, `user-top-read`).
+  The cached token is rejected with an actionable message until re-consent.
+
+### Added
+
+- **Playback** (Spotify Premium required for control): `now`, `play`,
+  `pause`, `next`, `prev`, `queue`, `volume` CLI commands and
+  `playback_state`, `play`, `pause`, `skip_next`, `skip_previous`,
+  `queue_add`, `set_volume` MCP tools. (ADR 0004)
+- **Personalization & lookup**: `top` / `top_items` (short/medium/long
+  ranges), `lookup` for any Spotify link, `search`, `tracks`, `recent` CLI
+  commands.
+- **Library**: `like`/`unlike` CLI, `save_to_library`/`remove_from_library`
+  tools (PUT /me/tracks).
+- **Playlist management**: `create-playlist`, `update-playlist`
+  (`--public`/`--private`), `delete-playlist` CLI; `update_playlist` tool and
+  confirm-gated `delete_playlist`/`shuffle_playlist` tools - destructive MCP
+  tools return a no-op preview until called with `confirm=true`. (ADR 0005)
+- **CLI `--json`** flag for machine-readable output on read commands.
+- Cross-process **file lock** around token refresh (msvcrt/flock) - the CLI
+  and MCP server sharing one cache can no longer double-refresh and
+  invalidate the rotating-refresh-token grant.
+- `restore` **conflict detection**: refuses to discard tracks added after
+  the snapshot unless `--force`.
+- Docs: API coverage matrix (audited against the Nov 2024 platform
+  restrictions), OAuth guide, testing guide, ADRs 0004/0005.
+
+### Fixed
+
+- **CI secrets job failed on every run**: shallow checkout broke gitleaks'
+  range scan. Now a deterministic full-history scan with the single known
+  (rotated) historical credential pinned in `.gitleaksignore`.
+
+### Intentionally omitted (documented in docs/api-coverage.md)
+
+- Recommendations, audio features/analysis, related artists, featured/
+  category playlists: restricted by Spotify (Nov 2024) for this app class.
+- Shows/episodes/audiobooks, follow graph, saved albums, seek/repeat/
+  transfer, cover upload: no consumer yet; each is a small addition when
+  demand appears.
+
 ## [0.2.0] - 2026-07-11
 
 Hardening release addressing an internal staff-level review (items #1-#15).

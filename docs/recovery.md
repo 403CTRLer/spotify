@@ -29,9 +29,16 @@ uv run spotify-mcp restore ~/.spotify-mcp/recovery/<file>.json
 ```
 
 This replaces the playlist's contents with the snapshot's `uris` and deletes
-the snapshot on success. Malformed snapshot files are rejected and never
-deleted. Entries in `skipped` cannot be restored via the Web API - re-add
-local files from a Spotify desktop client.
+the snapshot on success. Safety rules:
+
+- **Post-snapshot edits are detected**: if the playlist contains tracks that
+  are not in the snapshot (someone added music after the failure), restore
+  refuses with `RestoreConflictError`; `--force` overwrites deliberately.
+  The normal failure state - a playlist that is a partial subset of the
+  snapshot - restores without friction.
+- Malformed snapshot files are rejected and never deleted.
+- Entries in `skipped` cannot be restored via the Web API - re-add local
+  files from a Spotify desktop client.
 
 ## Failure modes, by operation
 
@@ -43,7 +50,9 @@ local files from a Spotify desktop client.
 | `mix` | none | additive-only since 0.2.0: nothing is ever removed, so a mid-flight failure leaves at worst a partial append |
 | `liked-to-playlist` | none | additive-only |
 | `clear-liked` | deletes all saved tracks | strict y/yes confirmation in the CLI; EOF counts as refusal; **no snapshot exists for saved tracks** - this is genuinely irreversible |
-| `restore` | replace-PUT | consumes the snapshot only on success |
+| `restore` | replace-PUT | refuses when post-snapshot edits detected (unless `--force`); consumes the snapshot only on success |
+| `delete-playlist` / `delete_playlist` tool | unfollow | y/N prompt (CLI) or confirm protocol (MCP); Spotify keeps deleted playlists recoverable ~90 days |
+| MCP `shuffle_playlist` | as CLI shuffle | two-step confirm protocol on top of snapshot + local-track guard |
 
 ## What is NOT protected
 

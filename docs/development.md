@@ -32,18 +32,9 @@ uv run pre-commit install  # ruff + ruff-format + gitleaks on commit
 
 ```sh
 uv run pytest -q                       # full suite (~2s, no network)
-uv run pytest tests/test_services.py   # one layer
 ```
 
-Conventions:
-
-- **Service tests** use the in-memory `FakeRepo` (structural match of the
-  protocol - pyright enforces it). No HTTP stubbing at this layer.
-- **Repository/client tests** use `httpx.MockTransport`; handlers route on
-  URL params, never on path alone (pagination follows same-path `next` URLs).
-- **Auth tests** monkeypatch `_token_request`/`_await_callback`; the PKCE
-  challenge is pinned to the RFC 7636 Appendix B vector.
-- Every bug fix lands with a regression test referencing its review item.
+Strategy, per-layer seams, and conventions: [testing.md](testing.md).
 
 ## Quality gate (run before every commit; CI runs the same)
 

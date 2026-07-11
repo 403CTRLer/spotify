@@ -1,115 +1,102 @@
-# User guide
+# User guide (CLI reference)
 
-All commands run as `uv run spotify-mcp …` (or `spotify-mcp …` if the venv is
-active). Global flags: `-v` (INFO logs), `-vv` (DEBUG logs), both to stderr.
+All commands run as `uv run spotify-mcp …` (or `spotify-mcp …` in an active
+venv). Global flags (before the subcommand): `-v`/`-vv` (INFO/DEBUG logs to
+stderr), `--json` (machine-readable stdout on read commands - pipe-friendly).
 
-Playlist/track references can be **URLs** (`https://open.spotify.com/playlist/…`,
-query strings and locale segments handled), **URIs** (`spotify:playlist:…`),
-or **bare 22-character IDs** where the type is implied by the command.
+References can be **URLs** (`https://open.spotify.com/...`, query strings and
+locale segments handled), **URIs** (`spotify:playlist:…`), or **bare
+22-character IDs** where the type is implied by the command.
 
-## Setup commands
+Exit codes: `0` success · `1` domain error (stderr) or refused confirmation ·
+`2` bad arguments · `130` interrupted.
 
-### `auth` - log in via browser (PKCE)
-
-```sh
-uv run spotify-mcp auth
-# Opening browser… → sign in → "Logged in as <name>"
-```
-
-Requires `SPOTIFY_CLIENT_ID` in the environment, `./.env`, or
-`~/.spotify-mcp/.env`. Tokens land in `~/.spotify-mcp/tokens.json`.
-
-### `serve` - run the MCP server (stdio)
+## Setup
 
 ```sh
-uv run spotify-mcp serve
+uv run spotify-mcp auth      # browser PKCE login; tokens -> ~/.spotify-mcp/
+uv run spotify-mcp serve     # run the MCP server on stdio
 ```
 
-See the README for MCP client configuration and
-[tool-reference.md](tool-reference.md) for the 10 tools.
-
-## Library and playlist commands
-
-### `playlists` - list your playlists
+## Playback (requires Spotify Premium)
 
 ```sh
-uv run spotify-mcp playlists
-# Road Trip  (184 tracks)  [37i9dQZF1DXcBWIGoYBM5M]
+uv run spotify-mcp now                       # state + devices ('*' = active)
+# Playing: Kids - MGMT  [Desk]
+#   * Desk (Computer)  vol=60
+#     Phone (Smartphone)  vol=30
+
+uv run spotify-mcp play                                  # resume
+uv run spotify-mcp play spotify:album:AAA…               # play an album
+uv run spotify-mcp play 4uLU6hMCjMI75M1A2tKUQC           # bare ID = track
+uv run spotify-mcp play spotify:playlist:PPP… --device <id-from-now>
+uv run spotify-mcp pause
+uv run spotify-mcp next
+uv run spotify-mcp prev
+uv run spotify-mcp queue https://open.spotify.com/track/TTT…
+uv run spotify-mcp volume 40
 ```
 
-### `mix` - merge sources into a playlist (additive)
+Non-Premium accounts get Spotify's 403 message on control commands; `now`
+works for everyone.
+
+## Discovery and library
 
 ```sh
-uv run spotify-mcp mix \
-  https://open.spotify.com/playlist/AAA… spotify:album:BBB… \
-  --into https://open.spotify.com/playlist/TTT…
-# Added 42 unique tracks (7 duplicates skipped).
+uv run spotify-mcp search "bicep glue" --type track --type album --limit 5
+uv run spotify-mcp lookup https://open.spotify.com/album/AAA…
+uv run spotify-mcp top tracks --range short --limit 10   # ~4 weeks
+uv run spotify-mcp top artists --range long
+uv run spotify-mcp recent --limit 20
+uv run spotify-mcp like spotify:track:TTT… spotify:track:UUU…
+uv run spotify-mcp unlike spotify:track:TTT…
+uv run spotify-mcp --json top tracks | jq '.[].name'     # shell pipelines
 ```
 
-Sources may be playlists, albums, or single tracks (bare IDs are assumed to be
-playlists). Since 0.2.0 mix **never removes anything**: tracks already in the
-target stay in place and count as duplicates; only new tracks are appended,
-in shuffled order. Local tracks in sources are skipped (the API cannot add them).
-
-### `shuffle` - persistently shuffle one playlist
+## Playlists
 
 ```sh
-uv run spotify-mcp shuffle spotify:playlist:AAA…
-# Shuffled 184 tracks.
+uv run spotify-mcp playlists                             # list yours
+uv run spotify-mcp tracks spotify:playlist:PPP… --limit 50
+uv run spotify-mcp create-playlist "Road Trip" --description "loud" --public
+uv run spotify-mcp update-playlist PPP… --name "Road Trip 2" --private
+uv run spotify-mcp delete-playlist PPP…                  # asks y/N; 90-day recovery
+uv run spotify-mcp mix SRC1 SRC2 --into TARGET           # additive: never removes
+uv run spotify-mcp liked-to-playlist TARGET
 ```
 
-A full-track-list snapshot is written to `~/.spotify-mcp/recovery/` first and
-deleted on success. If the playlist contains **local or unavailable tracks**,
-the command refuses (they would be permanently lost); add `--force` to shuffle
-only the streamable tracks - the dropped entries are recorded in the snapshot.
-
-### `shuffle-all` - shuffle every playlist you own
+## Shuffle and recovery
 
 ```sh
-uv run spotify-mcp shuffle-all --ignore "chill, https://open.spotify.com/playlist/AAA…"
-# shuffled: Road Trip
-#  ignored: Chill Vibes
-#  skipped (contains local/unavailable tracks): Old MP3s
+uv run spotify-mcp shuffle spotify:playlist:PPP…
+uv run spotify-mcp shuffle PPP… --force        # allow dropping local tracks
+uv run spotify-mcp shuffle-all --ignore "chill,https://open.spotify.com/playlist/…"
+uv run spotify-mcp restore ~/.spotify-mcp/recovery/PPP…-1752192000.json
+uv run spotify-mcp restore <snapshot> --force  # overwrite post-snapshot edits
 ```
 
-`--ignore` accepts links, URIs, IDs, or case-insensitive name fragments,
-comma-separated or repeated. An empty ignore list ignores nothing. Playlists
-with local tracks are skipped, never forced.
+- `shuffle` snapshots the full track list to `~/.spotify-mcp/recovery/`
+  **before** touching anything and deletes it on success; a failed run names
+  the snapshot file.
+- Playlists containing local/unavailable tracks refuse to shuffle (a rewrite
+  would permanently drop them); `--force` overrides and records the dropped
+  entries in the snapshot. `shuffle-all` skips such playlists.
+- `restore` refuses when the playlist gained tracks after the snapshot
+  (they would be removed); `--force` overwrites.
+  Full failure-mode table: [recovery.md](recovery.md).
 
-### `restore` - recover from a failed rewrite
-
-```sh
-uv run spotify-mcp restore ~/.spotify-mcp/recovery/AAA…-1752192000.json
-# Restored 184 tracks to 'Road Trip'.
-```
-
-See [recovery.md](recovery.md).
-
-### `liked-to-playlist` - copy all liked songs into a playlist
-
-```sh
-uv run spotify-mcp liked-to-playlist spotify:playlist:TTT…
-# Added 812 liked tracks.
-```
-
-### `clear-liked` - remove ALL liked songs (destructive)
+## Destructive: clear-liked
 
 ```sh
 uv run spotify-mcp clear-liked
-# Delete ALL 812 saved tracks? This cannot be undone. [y/N] y
-# Removed 812 saved tracks.
+# Delete ALL 812 saved tracks? This cannot be undone. [y/N]
 ```
 
-Only `y`/`yes` proceeds; anything else (including closed stdin) aborts.
-There is no snapshot for saved tracks - this is irreversible.
-
-## Exit codes
-
-`0` success · `1` domain error (message on stderr) or refused confirmation ·
-`2` bad arguments (argparse) · `130` interrupted.
+Only `y`/`yes` proceeds; closed stdin counts as refusal. There is **no
+snapshot** for saved tracks - this one is genuinely irreversible.
 
 ## Rate limits
 
-Development-mode Spotify apps are throttled aggressively. Short waits are
-retried automatically; when Spotify demands a wait longer than 30s the command
-fails fast and tells you how long to wait.
+Development-mode apps are throttled aggressively. Short waits are retried
+automatically; when Spotify demands a wait beyond 30s the command fails fast
+and reports how long to wait.

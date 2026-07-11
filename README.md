@@ -39,23 +39,41 @@ Client config:
 }
 ```
 
-Tools (intent-named, provider-agnostic): `user_profile`, `currently_playing`,
-`playlists`, `playlist_items`, `search`, `create_playlist`, `add_to_playlist`,
-`remove_from_playlist`, `library_tracks`, `recent_history` - full schemas,
-shapes, and error behavior in [docs/tool-reference.md](docs/tool-reference.md).
+24 intent-named, provider-agnostic tools covering reads (`user_profile`,
+`playback_state`, `playlists`, `playlist_items`, `library_tracks`,
+`recent_history`, `top_items`, `search`, `lookup`, `currently_playing`),
+playback control (`play`, `pause`, `skip_next`, `skip_previous`, `queue_add`,
+`set_volume` - Spotify Premium required), library writes (`save_to_library`,
+`remove_from_library`), and playlist management (`create_playlist`,
+`add_to_playlist`, `remove_from_playlist`, `update_playlist`, plus
+confirm-gated `delete_playlist` and `shuffle_playlist`). Destructive tools
+use a two-step confirm protocol: the first call returns a preview and makes
+no changes. Full schemas and error behavior:
+[docs/tool-reference.md](docs/tool-reference.md).
 References may be Spotify URLs, `spotify:` URIs, or bare IDs.
 
 ## CLI
 
+26 subcommands; `--json` gives machine-readable output on reads. Highlights:
+
 ```sh
-uv run spotify-mcp playlists
-uv run spotify-mcp mix SOURCE [SOURCE ...] --into TARGET   # additive: never removes
+uv run spotify-mcp now                     # playback state + devices
+uv run spotify-mcp play spotify:album:...  # play/pause/next/prev/queue/volume
+uv run spotify-mcp top tracks --range short
+uv run spotify-mcp search "bicep glue" --type album
+uv run spotify-mcp lookup <any spotify link>
+uv run spotify-mcp like TRACK... / unlike TRACK...
+uv run spotify-mcp playlists / tracks PLAYLIST / recent
+uv run spotify-mcp create-playlist NAME / update-playlist / delete-playlist
+uv run spotify-mcp mix SOURCE... --into TARGET   # additive: never removes
 uv run spotify-mcp shuffle PLAYLIST [--force]
-uv run spotify-mcp shuffle-all --ignore "chill,https://open.spotify.com/playlist/..."
-uv run spotify-mcp restore SNAPSHOT.json                   # recover a failed rewrite
+uv run spotify-mcp shuffle-all --ignore "chill,..."
+uv run spotify-mcp restore SNAPSHOT.json [--force]
 uv run spotify-mcp liked-to-playlist TARGET
-uv run spotify-mcp clear-liked        # destructive; asks for confirmation
+uv run spotify-mcp clear-liked             # destructive; asks for confirmation
 ```
+
+Full walkthroughs: [docs/user-guide.md](docs/user-guide.md).
 
 Safety model for destructive operations:
 
@@ -75,12 +93,15 @@ Command walkthroughs: [docs/user-guide.md](docs/user-guide.md)
 
 | Doc | Contents |
 |---|---|
-| [docs/user-guide.md](docs/user-guide.md) | every CLI command with examples, exit codes |
-| [docs/tool-reference.md](docs/tool-reference.md) | MCP tool schemas, shapes, errors |
+| [docs/user-guide.md](docs/user-guide.md) | CLI reference: every command with examples, exit codes |
+| [docs/tool-reference.md](docs/tool-reference.md) | all 24 MCP tools: schemas, shapes, confirm protocol, errors |
+| [docs/api-coverage.md](docs/api-coverage.md) | full Spotify Web API coverage matrix with omission rationale |
 | [docs/architecture.md](docs/architecture.md) | module boundaries, request flow |
+| [docs/oauth.md](docs/oauth.md) | PKCE flow, token lifecycle, scopes, app registration |
 | [docs/recovery.md](docs/recovery.md) | snapshots, restore, failure modes |
-| [docs/security.md](docs/security.md) | OAuth/PKCE, token storage, refresh, limitations |
-| [docs/development.md](docs/development.md) | structure, testing, CI, releases |
+| [docs/security.md](docs/security.md) | trust model, token storage, limitations |
+| [docs/development.md](docs/development.md) | structure, CI, releases |
+| [docs/testing.md](docs/testing.md) | test strategy, per-layer seams, conventions |
 | [docs/adr/](docs/adr/) | architecture decision records |
 
 ## Development
