@@ -29,6 +29,13 @@ def cmd_auth(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    from spotify_mcp.mcp.server import main as serve_main  # lazy: CLI cmds skip MCP import
+
+    serve_main()
+    return 0
+
+
 def cmd_playlists(args: argparse.Namespace) -> int:
     for playlist in _service().all_playlists():
         print(f"{playlist.name}  ({playlist.total_tracks} tracks)  [{playlist.id}]")
@@ -86,6 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("auth", help="Log in to Spotify (PKCE, opens browser)").set_defaults(
         func=cmd_auth
     )
+    sub.add_parser("serve", help="Run the MCP server on stdio").set_defaults(func=cmd_serve)
     sub.add_parser("playlists", help="List your playlists").set_defaults(func=cmd_playlists)
 
     mix = sub.add_parser("mix", help="Merge playlists/albums/tracks into one playlist")
