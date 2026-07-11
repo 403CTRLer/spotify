@@ -88,17 +88,21 @@ class SpotifyService:
         raise ValueError(f"Cannot collect tracks from a {kind} reference: {ref!r}")
 
     def mix_playlists(self, sources: Sequence[str], target_ref: str) -> tuple[int, int]:
-        """Merge sources into target, deduped and shuffled. Returns (added, duplicates)."""
+        """Merge sources into target additively. Tracks already in the target stay
+        where they are; only new tracks are appended (shuffled). Never removes
+        anything, so there is no partial-failure data-loss window (review #2).
+        Returns (added, duplicates)."""
         collected: list[str] = []
         for source in sources:
             collected.extend(self.collect_track_uris(source))
         unique = list(dict.fromkeys(collected))
         _, target_id = parse_ref(target_ref, "playlist")
-        random.shuffle(unique)
-        # legacy semantics: drop any copies already in the target, then append
-        self._repo.remove_items(target_id, unique)
-        self._repo.add_items(target_id, unique)
-        return len(unique), len(collected) - len(unique)
+        existing, _skipped = self._repo.all_playlist_uris(target_id)
+        existing_set = set(existing)
+        to_add = [u for u in unique if u not in existing_set]
+        random.shuffle(to_add)
+        self._repo.add_items(target_id, to_add)
+        return len(to_add), len(collected) - len(to_add)
 
     def shuffle_playlist(self, ref: str, force: bool = False) -> int:
         """Persistently shuffle a playlist. Snapshots the full track list to disk

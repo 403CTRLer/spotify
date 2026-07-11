@@ -241,7 +241,7 @@ def test_non_owned_playlists_are_skipped(service, repo):
     assert results == {"Mine": "shuffled"}
 
 
-# -- mix (legacy semantics preserved) ------------------------------------------
+# -- mix: additive-only, no data-loss window (review #2) ------------------------
 
 
 def test_mix_dedupes_and_reports_duplicates(service, repo):
@@ -253,12 +253,21 @@ def test_mix_dedupes_and_reports_duplicates(service, repo):
     assert sorted(repo.playlist_uris[PL_C]) == [uri(1), uri(2), uri(3)]
 
 
-def test_mix_removes_from_target_before_adding(service, repo):
+def test_mix_never_removes_from_target(service, repo):
+    repo.add_playlist(PL_A, "Src", uris=[uri(1), uri(2)])
+    repo.add_playlist(PL_C, "Target", uris=[uri(1)])
+    added, dupes = service.mix_playlists([PL_A], PL_C)
+    assert ("remove", PL_C) not in repo.calls  # additive only: no destructive step
+    assert repo.playlist_uris[PL_C] == [uri(1), uri(2)]  # existing copy stays in place
+    assert (added, dupes) == (1, 1)
+
+
+def test_mix_with_nothing_new_is_a_noop_add(service, repo):
     repo.add_playlist(PL_A, "Src", uris=[uri(1)])
     repo.add_playlist(PL_C, "Target", uris=[uri(1)])
-    service.mix_playlists([PL_A], PL_C)
-    assert repo.calls == [("remove", PL_C), ("add", PL_C)]
-    assert repo.playlist_uris[PL_C] == [uri(1)]  # no duplicate in target
+    added, dupes = service.mix_playlists([PL_A], PL_C)
+    assert (added, dupes) == (0, 1)
+    assert repo.playlist_uris[PL_C] == [uri(1)]
 
 
 # -- saved tracks ----------------------------------------------------------------
