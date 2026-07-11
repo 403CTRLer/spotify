@@ -12,6 +12,12 @@ def _chunks(items: Sequence[str], size: int) -> list[Sequence[str]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
+def _clamp(limit: int, cap: int) -> int:
+    """Keep page sizes inside Spotify's per-endpoint maxima instead of letting
+    the API 400 on caller-supplied values (review #13)."""
+    return max(1, min(limit, cap))
+
+
 class SpotifyRepository(Protocol):
     """Provider-facing data access. Services depend on this, never on HTTP."""
 
@@ -58,7 +64,7 @@ class SpotifyApiRepository:
         }
 
     def my_playlists(self, limit: int = 50, offset: int = 0) -> Page[Playlist]:
-        data = self._client.get("/me/playlists", limit=limit, offset=offset)
+        data = self._client.get("/me/playlists", limit=_clamp(limit, 50), offset=offset)
         return {
             "total": data.get("total", 0),
             "offset": data.get("offset", offset),
@@ -72,7 +78,9 @@ class SpotifyApiRepository:
         return Playlist.from_api(self._client.get(f"/playlists/{playlist_id}"))
 
     def playlist_items(self, playlist_id: str, limit: int = 100, offset: int = 0) -> Page[Track]:
-        data = self._client.get(f"/playlists/{playlist_id}/tracks", limit=limit, offset=offset)
+        data = self._client.get(
+            f"/playlists/{playlist_id}/tracks", limit=_clamp(limit, 100), offset=offset
+        )
         return {
             "total": data.get("total", 0),
             "offset": data.get("offset", offset),
@@ -108,7 +116,10 @@ class SpotifyApiRepository:
         ]
 
     def search(self, query: str, types: Sequence[str], limit: int = 10) -> dict[str, Any]:
-        data = self._client.get("/search", q=query, type=",".join(types), limit=limit) or {}
+        data = (
+            self._client.get("/search", q=query, type=",".join(types), limit=_clamp(limit, 50))
+            or {}
+        )
         results: dict[str, Any] = {}
         for key, page in data.items():
             items = [i for i in (page.get("items") or []) if i]  # search can contain nulls
@@ -151,7 +162,7 @@ class SpotifyApiRepository:
             self._client.post(f"/playlists/{playlist_id}/tracks", json={"uris": list(chunk)})
 
     def saved_tracks(self, limit: int = 50, offset: int = 0) -> Page[Track]:
-        data = self._client.get("/me/tracks", limit=limit, offset=offset)
+        data = self._client.get("/me/tracks", limit=_clamp(limit, 50), offset=offset)
         return {
             "total": data.get("total", 0),
             "offset": data.get("offset", offset),
@@ -176,7 +187,7 @@ class SpotifyApiRepository:
         return len(track_ids)
 
     def recently_played(self, limit: int = 20) -> list[PlayedItem]:
-        data = self._client.get("/me/player/recently-played", limit=min(limit, 50)) or {}
+        data = self._client.get("/me/player/recently-played", limit=_clamp(limit, 50)) or {}
         return [
             {"played_at": item.get("played_at"), "track": Track.from_api(item["track"])}
             for item in data.get("items") or []

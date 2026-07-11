@@ -38,8 +38,13 @@ class Settings:
 
     @classmethod
     def from_env(cls, dotenv_path: Path | None = None) -> "Settings":
-        """Load settings from the environment, falling back to a .env file."""
+        """Load settings from the environment, then ./.env, then ~/.spotify-mcp/.env.
+
+        The home fallback matters for MCP clients that launch the server
+        without setting a working directory (review #12)."""
         dotenv = _load_dotenv(dotenv_path or Path(".env"))
+        if not dotenv and dotenv_path is None:
+            dotenv = _load_dotenv(DEFAULT_STATE_DIR / ".env")
 
         def get(name: str) -> str | None:
             return os.environ.get(name) or dotenv.get(name)

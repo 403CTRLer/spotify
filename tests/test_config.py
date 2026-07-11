@@ -32,3 +32,20 @@ def test_missing_client_id_raises(tmp_path, monkeypatch):
     monkeypatch.delenv("SPOTIFY_CLIENT_ID", raising=False)
     with pytest.raises(AuthError, match="SPOTIFY_CLIENT_ID"):
         Settings.from_env(dotenv_path=tmp_path / "absent.env")
+
+
+def test_home_dotenv_fallback_when_cwd_has_none(tmp_path, monkeypatch):
+    # review #12: MCP clients may launch the server with an arbitrary cwd
+    import spotify_mcp.config.settings as settings_module
+
+    monkeypatch.delenv("SPOTIFY_CLIENT_ID", raising=False)
+    monkeypatch.delenv("SPOTIFY_REDIRECT_URI", raising=False)
+    cwd = tmp_path / "random-cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)  # no ./.env here
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / ".env").write_text("SPOTIFY_CLIENT_ID=home-id\n")
+    monkeypatch.setattr(settings_module, "DEFAULT_STATE_DIR", state_dir)
+
+    assert Settings.from_env().client_id == "home-id"

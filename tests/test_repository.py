@@ -134,6 +134,23 @@ def test_playlist_from_api_missing_id_raises_value_error():
         Playlist.from_api({"name": "ghost"})
 
 
+def test_limits_are_clamped_to_endpoint_maxima():
+    # review #13: /me/tracks caps at 50; out-of-range limits must not 400
+    seen = {}
+
+    def handler(request):
+        seen[request.url.path] = request.url.params.get("limit")
+        return httpx.Response(200, json={"items": [], "total": 0, "offset": 0})
+
+    repo = make_repo(handler)
+    repo.saved_tracks(limit=100)
+    repo.playlist_items("pl", limit=500)
+    repo.my_playlists(limit=0)
+    assert seen["/v1/me/tracks"] == "50"
+    assert seen["/v1/playlists/pl/tracks"] == "100"
+    assert seen["/v1/me/playlists"] == "1"
+
+
 def test_my_playlists_maps_page():
     payload = {
         "total": 2,
