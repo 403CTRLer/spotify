@@ -28,7 +28,8 @@ SCOPES = (
     "playlist-read-private playlist-read-collaborative "
     "playlist-modify-public playlist-modify-private "
     "user-library-read user-library-modify "
-    "user-read-currently-playing user-read-recently-played"
+    "user-read-currently-playing user-read-recently-played "
+    "user-read-playback-state user-modify-playback-state user-top-read"
 )
 LOGIN_TIMEOUT_S = 300
 _EXPIRY_MARGIN_S = 60

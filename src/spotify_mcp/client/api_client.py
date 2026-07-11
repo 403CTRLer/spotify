@@ -29,14 +29,14 @@ class SpotifyApiClient:
     def get(self, path: str, **params: Any) -> Any:
         return self._request("GET", path, params=params or None)
 
-    def post(self, path: str, json: dict[str, Any] | None = None) -> Any:
-        return self._request("POST", path, json=json)
+    def post(self, path: str, json: dict[str, Any] | None = None, **params: Any) -> Any:
+        return self._request("POST", path, params=params or None, json=json)
 
-    def put(self, path: str, json: dict[str, Any] | None = None) -> Any:
-        return self._request("PUT", path, json=json)
+    def put(self, path: str, json: dict[str, Any] | None = None, **params: Any) -> Any:
+        return self._request("PUT", path, params=params or None, json=json)
 
-    def delete(self, path: str, json: dict[str, Any] | None = None) -> Any:
-        return self._request("DELETE", path, json=json)
+    def delete(self, path: str, json: dict[str, Any] | None = None, **params: Any) -> Any:
+        return self._request("DELETE", path, params=params or None, json=json)
 
     def paginate(self, path: str, **params: Any) -> Iterator[dict[str, Any]]:
         """Yield items across pages, following Spotify's absolute `next` URLs."""

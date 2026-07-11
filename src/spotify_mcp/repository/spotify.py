@@ -18,6 +18,27 @@ def _clamp(limit: int, cap: int) -> int:
     return max(1, min(limit, cap))
 
 
+def _device(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": data.get("id"),
+        "name": data.get("name"),
+        "type": data.get("type"),
+        "is_active": bool(data.get("is_active")),
+        "volume_percent": data.get("volume_percent"),
+    }
+
+
+def _artist(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": data.get("id"),
+        "name": data.get("name"),
+        "uri": data.get("uri"),
+        "genres": data.get("genres") or [],
+        "popularity": data.get("popularity"),
+        "followers": (data.get("followers") or {}).get("total"),
+    }
+
+
 class SpotifyRepository(Protocol):
     """Provider-facing data access. Services depend on this, never on HTTP."""
 
@@ -40,8 +61,37 @@ class SpotifyRepository(Protocol):
     def replace_items(self, playlist_id: str, uris: Sequence[str]) -> None: ...
     def saved_tracks(self, limit: int = 50, offset: int = 0) -> Page[Track]: ...
     def all_saved_ids(self) -> list[str]: ...
+    def save_tracks(self, track_ids: Sequence[str]) -> int: ...
     def remove_saved(self, track_ids: Sequence[str]) -> int: ...
     def recently_played(self, limit: int = 20) -> list[PlayedItem]: ...
+    # playback (control requires Spotify Premium; dict shapes documented in
+    # docs/tool-reference.md - heterogeneous like search, per ADR 0003)
+    def playback_state(self) -> dict[str, Any] | None: ...
+    def devices(self) -> list[dict[str, Any]]: ...
+    def start_playback(
+        self,
+        device_id: str | None = None,
+        context_uri: str | None = None,
+        uris: Sequence[str] | None = None,
+    ) -> None: ...
+    def pause_playback(self, device_id: str | None = None) -> None: ...
+    def skip_next(self) -> None: ...
+    def skip_previous(self) -> None: ...
+    def add_to_queue(self, uri: str) -> None: ...
+    def set_volume(self, percent: int) -> None: ...
+    # personalization and catalog lookup
+    def top_tracks(
+        self, limit: int = 20, offset: int = 0, time_range: str = "medium_term"
+    ) -> Page[Track]: ...
+    def top_artists(
+        self, limit: int = 20, offset: int = 0, time_range: str = "medium_term"
+    ) -> Page[dict[str, Any]]: ...
+    def get_track(self, track_id: str) -> Track: ...
+    def get_album(self, album_id: str) -> dict[str, Any]: ...
+    def get_artist(self, artist_id: str) -> dict[str, Any]: ...
+    # playlist management
+    def update_playlist(self, playlist_id: str, changes: dict[str, Any]) -> None: ...
+    def unfollow_playlist(self, playlist_id: str) -> None: ...
 
 
 class SpotifyApiRepository:
@@ -181,10 +231,117 @@ class SpotifyApiRepository:
                 ids.append(track["id"])
         return ids
 
+    def save_tracks(self, track_ids: Sequence[str]) -> int:
+        for chunk in _chunks(track_ids, SAVED_CHUNK):
+            self._client.put("/me/tracks", json={"ids": list(chunk)})
+        return len(track_ids)
+
     def remove_saved(self, track_ids: Sequence[str]) -> int:
         for chunk in _chunks(track_ids, SAVED_CHUNK):
             self._client.delete("/me/tracks", json={"ids": list(chunk)})
         return len(track_ids)
+
+    # -- playback -------------------------------------------------------------
+
+    def playback_state(self) -> dict[str, Any] | None:
+        data = self._client.get("/me/player")
+        if not data:
+            return None
+        item = data.get("item")
+        return {
+            "is_playing": bool(data.get("is_playing")),
+            "progress_ms": data.get("progress_ms"),
+            "shuffle_state": data.get("shuffle_state"),
+            "repeat_state": data.get("repeat_state"),
+            "device": _device(data.get("device") or {}),
+            "track": Track.from_api(item).model_dump() if item else None,
+        }
+
+    def devices(self) -> list[dict[str, Any]]:
+        data = self._client.get("/me/player/devices") or {}
+        return [_device(d) for d in data.get("devices") or [] if d]
+
+    def start_playback(
+        self,
+        device_id: str | None = None,
+        context_uri: str | None = None,
+        uris: Sequence[str] | None = None,
+    ) -> None:
+        body: dict[str, Any] = {}
+        if context_uri:
+            body["context_uri"] = context_uri
+        if uris:
+            body["uris"] = list(uris)
+        params: dict[str, Any] = {"device_id": device_id} if device_id else {}
+        self._client.put("/me/player/play", json=body or None, **params)
+
+    def pause_playback(self, device_id: str | None = None) -> None:
+        params: dict[str, Any] = {"device_id": device_id} if device_id else {}
+        self._client.put("/me/player/pause", **params)
+
+    def skip_next(self) -> None:
+        self._client.post("/me/player/next")
+
+    def skip_previous(self) -> None:
+        self._client.post("/me/player/previous")
+
+    def add_to_queue(self, uri: str) -> None:
+        self._client.post("/me/player/queue", uri=uri)
+
+    def set_volume(self, percent: int) -> None:
+        self._client.put("/me/player/volume", volume_percent=percent)
+
+    # -- personalization and catalog lookup ------------------------------------
+
+    def top_tracks(
+        self, limit: int = 20, offset: int = 0, time_range: str = "medium_term"
+    ) -> Page[Track]:
+        data = self._client.get(
+            "/me/top/tracks", limit=_clamp(limit, 50), offset=offset, time_range=time_range
+        )
+        return {
+            "total": data.get("total", 0),
+            "offset": data.get("offset", offset),
+            "items": [Track.from_api(i) for i in data.get("items") or [] if i],
+        }
+
+    def top_artists(
+        self, limit: int = 20, offset: int = 0, time_range: str = "medium_term"
+    ) -> Page[dict[str, Any]]:
+        data = self._client.get(
+            "/me/top/artists", limit=_clamp(limit, 50), offset=offset, time_range=time_range
+        )
+        return {
+            "total": data.get("total", 0),
+            "offset": data.get("offset", offset),
+            "items": [_artist(i) for i in data.get("items") or [] if i],
+        }
+
+    def get_track(self, track_id: str) -> Track:
+        return Track.from_api(self._client.get(f"/tracks/{track_id}"))
+
+    def get_album(self, album_id: str) -> dict[str, Any]:
+        data = self._client.get(f"/albums/{album_id}") or {}
+        return {
+            "id": data.get("id"),
+            "name": data.get("name"),
+            "uri": data.get("uri"),
+            "artists": [a.get("name") or "" for a in data.get("artists") or []],
+            "release_date": data.get("release_date"),
+            "total_tracks": data.get("total_tracks"),
+            "label": data.get("label"),
+        }
+
+    def get_artist(self, artist_id: str) -> dict[str, Any]:
+        return _artist(self._client.get(f"/artists/{artist_id}") or {})
+
+    # -- playlist management ----------------------------------------------------
+
+    def update_playlist(self, playlist_id: str, changes: dict[str, Any]) -> None:
+        self._client.put(f"/playlists/{playlist_id}", json=changes)
+
+    def unfollow_playlist(self, playlist_id: str) -> None:
+        self._client.delete(f"/playlists/{playlist_id}/followers")
 
     def recently_played(self, limit: int = 20) -> list[PlayedItem]:
         data = self._client.get("/me/player/recently-played", limit=_clamp(limit, 50)) or {}

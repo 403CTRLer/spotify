@@ -151,6 +151,172 @@ def test_limits_are_clamped_to_endpoint_maxima():
     assert seen["/v1/me/playlists"] == "1"
 
 
+def test_playback_state_maps_device_and_track():
+    payload = {
+        "is_playing": True,
+        "progress_ms": 42,
+        "shuffle_state": False,
+        "repeat_state": "off",
+        "device": {
+            "id": "d1",
+            "name": "Desk",
+            "type": "Computer",
+            "is_active": True,
+            "volume_percent": 60,
+        },
+        "item": {"id": "x" * 22, "name": "Song", "uri": "spotify:track:" + "x" * 22},
+    }
+    repo = make_repo(lambda request: httpx.Response(200, json=payload))
+    state = repo.playback_state()
+    assert state is not None
+    assert state["device"]["name"] == "Desk"
+    assert state["track"]["name"] == "Song"
+
+
+def test_playback_state_none_when_idle():
+    repo = make_repo(lambda request: httpx.Response(204))
+    assert repo.playback_state() is None
+
+
+def test_playback_commands_send_correct_requests():
+    calls = []
+
+    def handler(request):
+        body = json.loads(request.content) if request.content else None
+        calls.append((request.method, request.url.path, dict(request.url.params), body))
+        return httpx.Response(204)
+
+    repo = make_repo(handler)
+    repo.start_playback(uris=["spotify:track:" + "a" * 22])
+    repo.start_playback(device_id="d1", context_uri="spotify:playlist:" + "p" * 22)
+    repo.pause_playback()
+    repo.skip_next()
+    repo.skip_previous()
+    repo.add_to_queue("spotify:track:" + "q" * 22)
+    repo.set_volume(60)
+
+    assert calls[0] == ("PUT", "/v1/me/player/play", {}, {"uris": ["spotify:track:" + "a" * 22]})
+    assert calls[1] == (
+        "PUT",
+        "/v1/me/player/play",
+        {"device_id": "d1"},
+        {"context_uri": "spotify:playlist:" + "p" * 22},
+    )
+    assert calls[2] == ("PUT", "/v1/me/player/pause", {}, None)
+    assert calls[3][:2] == ("POST", "/v1/me/player/next")
+    assert calls[4][:2] == ("POST", "/v1/me/player/previous")
+    assert calls[5] == ("POST", "/v1/me/player/queue", {"uri": "spotify:track:" + "q" * 22}, None)
+    assert calls[6] == ("PUT", "/v1/me/player/volume", {"volume_percent": "60"}, None)
+
+
+def test_devices_mapping():
+    payload = {
+        "devices": [
+            {
+                "id": "d1",
+                "name": "Phone",
+                "type": "Smartphone",
+                "is_active": False,
+                "volume_percent": 30,
+            },
+            None,
+        ]
+    }
+    repo = make_repo(lambda request: httpx.Response(200, json=payload))
+    assert repo.devices() == [
+        {
+            "id": "d1",
+            "name": "Phone",
+            "type": "Smartphone",
+            "is_active": False,
+            "volume_percent": 30,
+        }
+    ]
+
+
+def test_top_tracks_sends_time_range_and_clamps_limit():
+    seen = {}
+
+    def handler(request):
+        seen.update(dict(request.url.params))
+        return httpx.Response(200, json={"items": [], "total": 0, "offset": 0})
+
+    repo = make_repo(handler)
+    repo.top_tracks(limit=200, time_range="short_term")
+    assert seen["time_range"] == "short_term"
+    assert seen["limit"] == "50"
+
+
+def test_top_artists_maps_artist_summary():
+    payload = {
+        "total": 1,
+        "offset": 0,
+        "items": [
+            {
+                "id": "a1",
+                "name": "Artist",
+                "uri": "spotify:artist:a1",
+                "genres": ["rock"],
+                "popularity": 70,
+                "followers": {"total": 1000},
+            }
+        ],
+    }
+    repo = make_repo(lambda request: httpx.Response(200, json=payload))
+    page = repo.top_artists()
+    assert page["items"] == [
+        {
+            "id": "a1",
+            "name": "Artist",
+            "uri": "spotify:artist:a1",
+            "genres": ["rock"],
+            "popularity": 70,
+            "followers": 1000,
+        }
+    ]
+
+
+def test_save_tracks_chunks_of_50_via_put():
+    repo, calls = recording_repo(lambda request: httpx.Response(200))
+    assert repo.save_tracks([f"{i:022d}" for i in range(70)]) == 70
+    assert [(m, len(b["ids"])) for m, p, b in calls if p == "/v1/me/tracks"] == [
+        ("PUT", 50),
+        ("PUT", 20),
+    ]
+
+
+def test_update_and_unfollow_playlist():
+    repo, calls = recording_repo(lambda request: httpx.Response(200))
+    repo.update_playlist("pl", {"name": "New", "public": False})
+    repo.unfollow_playlist("pl")
+    assert calls[0] == ("PUT", "/v1/playlists/pl", {"name": "New", "public": False})
+    assert calls[1] == ("DELETE", "/v1/playlists/pl/followers", None)
+
+
+def test_get_album_trims_payload():
+    payload = {
+        "id": "al",
+        "name": "Album",
+        "uri": "spotify:album:al",
+        "artists": [{"name": "A"}],
+        "release_date": "2020-01-01",
+        "total_tracks": 12,
+        "label": "Lbl",
+        "tracks": {"items": []},
+        "available_markets": ["US"] * 100,
+    }
+    repo = make_repo(lambda request: httpx.Response(200, json=payload))
+    assert repo.get_album("al") == {
+        "id": "al",
+        "name": "Album",
+        "uri": "spotify:album:al",
+        "artists": ["A"],
+        "release_date": "2020-01-01",
+        "total_tracks": 12,
+        "label": "Lbl",
+    }
+
+
 def test_my_playlists_maps_page():
     payload = {
         "total": 2,
