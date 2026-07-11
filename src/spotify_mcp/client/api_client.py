@@ -70,7 +70,18 @@ class SpotifyApiClient:
                 continue
             if resp.status_code == 429 and rate_limit_attempts < MAX_RATE_LIMIT_RETRIES:
                 rate_limit_attempts += 1
-                delay = min(int(resp.headers.get("Retry-After") or 1), MAX_RETRY_AFTER_S)
+                try:
+                    delay = int(resp.headers.get("Retry-After") or 1)
+                except ValueError:  # e.g. an HTTP-date; retry conservatively
+                    delay = 1
+                if delay > MAX_RETRY_AFTER_S:
+                    # retrying before the server's window would just 429 again;
+                    # fail fast and tell the caller how long to wait (review #5)
+                    raise RateLimitError(
+                        f"Spotify requested a {delay}s wait (cap is {MAX_RETRY_AFTER_S}s); "
+                        "not retrying.",
+                        retry_after=delay,
+                    )
                 log.warning(
                     "Rate limited; retrying in %ss (attempt %s/%s)",
                     delay,

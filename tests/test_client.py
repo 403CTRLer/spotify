@@ -87,6 +87,44 @@ def test_persistent_429_raises_rate_limit_error():
         client.get("/search")
 
 
+def test_huge_retry_after_fails_fast_without_sleeping(monkeypatch):
+    # review #5: capping the sleep and retrying anyway guaranteed another 429;
+    # a wait beyond the cap must fail immediately with the value attached
+    import spotify_mcp.client.api_client as client_module
+
+    def no_sleep(seconds):
+        raise AssertionError("must not sleep for an out-of-cap Retry-After")
+
+    monkeypatch.setattr(client_module.time, "sleep", no_sleep)
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(429, headers={"Retry-After": "3600"})
+
+    client, _ = make_client(handler)
+    with pytest.raises(RateLimitError, match="3600") as exc_info:
+        client.get("/search")
+    assert exc_info.value.retry_after == 3600
+    assert len(calls) == 1  # no blind retries
+
+
+def test_non_numeric_retry_after_retries_conservatively(monkeypatch):
+    import spotify_mcp.client.api_client as client_module
+
+    sleeps = []
+    monkeypatch.setattr(client_module.time, "sleep", sleeps.append)
+
+    def handler(request):
+        if not sleeps:
+            return httpx.Response(429, headers={"Retry-After": "Fri, 01 Jan 2027 00:00:00 GMT"})
+        return httpx.Response(200, json={"ok": True})
+
+    client, _ = make_client(handler)
+    assert client.get("/search") == {"ok": True}
+    assert sleeps == [1]  # HTTP-date header did not crash; fell back to 1s
+
+
 def test_404_raises_not_found_with_spotify_message():
     def handler(request):
         return httpx.Response(404, json={"error": {"message": "Invalid playlist Id"}})

@@ -24,4 +24,11 @@ class NotFoundError(ApiError):
 
 
 class RateLimitError(ApiError):
-    """Still rate-limited after bounded retries."""
+    """Rate-limited beyond what bounded retries can absorb.
+
+    `retry_after` carries the server's requested wait in seconds when known.
+    """
+
+    def __init__(self, message: str, status: int = 429, retry_after: int | None = None) -> None:
+        super().__init__(message, status)
+        self.retry_after = retry_after
