@@ -270,6 +270,44 @@ def test_mix_with_nothing_new_is_a_noop_add(service, repo):
     assert repo.playlist_uris[PL_C] == [uri(1)]
 
 
+# -- restore (review #6) ---------------------------------------------------------
+
+
+def test_restore_replaces_playlist_and_deletes_snapshot(service, repo, tmp_path):
+    import json
+
+    repo.add_playlist(PL_A, "Broken", uris=[uri(9)])
+    snapshot = tmp_path / "snap.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "playlist_id": PL_A,
+                "name": "Broken",
+                "uris": [uri(1), uri(2)],
+                "skipped": ["spotify:local:x"],
+            }
+        )
+    )
+    name, count, skipped = service.restore_snapshot(snapshot)
+    assert (name, count) == ("Broken", 2)
+    assert skipped == ["spotify:local:x"]
+    assert repo.playlist_uris[PL_A] == [uri(1), uri(2)]
+    assert not snapshot.exists()  # consumed on success
+
+
+def test_restore_rejects_malformed_snapshots(service, tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json")
+    with pytest.raises(ValueError, match="Cannot read"):
+        service.restore_snapshot(bad)
+
+    wrong_shape = tmp_path / "wrong.json"
+    wrong_shape.write_text('{"uris": "nope"}')
+    with pytest.raises(ValueError, match="not a spotify-mcp recovery snapshot"):
+        service.restore_snapshot(wrong_shape)
+    assert wrong_shape.exists()  # never deleted on failure
+
+
 # -- saved tracks ----------------------------------------------------------------
 
 

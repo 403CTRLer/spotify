@@ -172,6 +172,25 @@ class SpotifyService:
         uris = [to_uri("track", track_id) for track_id in self._repo.all_saved_ids()]
         return self._repo.add_items(target_id, uris)
 
+    def restore_snapshot(self, path: Path | str) -> tuple[str, int, list[str]]:
+        """Replace a playlist's contents from a recovery snapshot, deleting the
+        snapshot on success. Returns (name, restored_count, skipped_entries).
+
+        `skipped_entries` are local/unavailable tracks the snapshot could not
+        capture; they cannot be restored via the API."""
+        snapshot_path = Path(path)
+        try:
+            data = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Cannot read snapshot {snapshot_path}: {exc}") from exc
+        playlist_id, uris = data.get("playlist_id"), data.get("uris")
+        if not isinstance(playlist_id, str) or not isinstance(uris, list):
+            raise ValueError(f"{snapshot_path} is not a spotify-mcp recovery snapshot")
+        self._repo.replace_items(playlist_id, uris)
+        snapshot_path.unlink(missing_ok=True)
+        name = data.get("name") or playlist_id
+        return name, len(uris), list(data.get("skipped") or [])
+
     def clear_saved_tracks(self) -> int:
         """Remove ALL liked songs. Destructive - confirmation belongs to the caller."""
         return self._repo.remove_saved(self._repo.all_saved_ids())

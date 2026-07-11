@@ -61,6 +61,14 @@ def cmd_shuffle_all(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_restore(args: argparse.Namespace) -> int:
+    name, count, skipped = _service().restore_snapshot(args.snapshot)
+    print(f"Restored {count} tracks to {name!r}.")
+    if skipped:
+        print(f"Note: {len(skipped)} local/unavailable track(s) could not be restored via the API.")
+    return 0
+
+
 def cmd_liked_to_playlist(args: argparse.Namespace) -> int:
     count = _service().saved_to_playlist(args.target)
     print(f"Added {count} liked tracks.")
@@ -118,6 +126,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Playlists to skip: links, IDs, or partial names (repeatable or comma-separated)",
     )
     shuffle_all.set_defaults(func=cmd_shuffle_all)
+
+    restore = sub.add_parser("restore", help="Restore a playlist from a recovery snapshot")
+    restore.add_argument("snapshot", help="Path to a snapshot JSON from ~/.spotify-mcp/recovery/")
+    restore.set_defaults(func=cmd_restore)
 
     liked = sub.add_parser("liked-to-playlist", help="Copy all liked songs into a playlist")
     liked.add_argument("target", help="Target playlist (link, URI, or ID)")
