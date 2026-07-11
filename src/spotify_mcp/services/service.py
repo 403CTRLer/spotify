@@ -58,6 +58,85 @@ class SpotifyService:
     def recently_played(self, limit: int = 20) -> list[PlayedItem]:
         return self._repo.recently_played(limit)
 
+    # -- playback (control requires Spotify Premium) ----------------------------
+
+    def playback(self) -> dict[str, Any]:
+        """Current playback state plus available devices."""
+        return {"state": self._repo.playback_state(), "devices": self._repo.devices()}
+
+    def play(self, ref: str | None = None, device_id: str | None = None) -> str:
+        """Resume playback, or play a track/album/playlist/artist reference."""
+        if not ref:
+            self._repo.start_playback(device_id=device_id)
+            return "Resumed playback."
+        kind, spotify_id = parse_ref(ref, bare_type="track")
+        uri = to_uri(kind, spotify_id)
+        if kind == "track":
+            self._repo.start_playback(device_id=device_id, uris=[uri])
+        else:  # album/playlist/artist play as a context
+            self._repo.start_playback(device_id=device_id, context_uri=uri)
+        return f"Playing {kind} {spotify_id}."
+
+    def pause(self, device_id: str | None = None) -> None:
+        self._repo.pause_playback(device_id)
+
+    def skip_next(self) -> None:
+        self._repo.skip_next()
+
+    def skip_previous(self) -> None:
+        self._repo.skip_previous()
+
+    def queue_add(self, track_ref: str) -> None:
+        self._repo.add_to_queue(to_uri(*parse_ref(track_ref, "track")))
+
+    def set_volume(self, percent: int) -> None:
+        if not 0 <= percent <= 100:
+            raise ValueError(f"Volume must be 0-100, got {percent}")
+        self._repo.set_volume(percent)
+
+    # -- personalization and catalog lookup --------------------------------------
+
+    _TIME_RANGES = {"short": "short_term", "medium": "medium_term", "long": "long_term"}
+
+    def _time_range(self, value: str) -> str:
+        normalized = self._TIME_RANGES.get(value, value)
+        if normalized not in self._TIME_RANGES.values():
+            raise ValueError(f"time_range must be one of {sorted(self._TIME_RANGES)}")
+        return normalized
+
+    def top_tracks(
+        self, time_range: str = "medium", limit: int = 20, offset: int = 0
+    ) -> Page[Track]:
+        return self._repo.top_tracks(limit, offset, self._time_range(time_range))
+
+    def top_artists(
+        self, time_range: str = "medium", limit: int = 20, offset: int = 0
+    ) -> Page[dict[str, Any]]:
+        return self._repo.top_artists(limit, offset, self._time_range(time_range))
+
+    def get_playlist(self, ref: str) -> Playlist:
+        _, playlist_id = parse_ref(ref, "playlist")
+        return self._repo.get_playlist(playlist_id)
+
+    def lookup(self, ref: str) -> dict[str, Any]:
+        """Metadata for a track/album/artist/playlist URL or URI."""
+        kind, spotify_id = parse_ref(ref)
+        if kind == "track":
+            return {"type": "track", **self._repo.get_track(spotify_id).model_dump()}
+        if kind == "album":
+            return {"type": "album", **self._repo.get_album(spotify_id)}
+        if kind == "artist":
+            return {"type": "artist", **self._repo.get_artist(spotify_id)}
+        return {"type": "playlist", **self._repo.get_playlist(spotify_id).model_dump()}
+
+    # -- library -----------------------------------------------------------------
+
+    def save_library_tracks(self, track_refs: Sequence[str]) -> int:
+        return self._repo.save_tracks([parse_ref(r, "track")[1] for r in track_refs])
+
+    def remove_library_tracks(self, track_refs: Sequence[str]) -> int:
+        return self._repo.remove_saved([parse_ref(r, "track")[1] for r in track_refs])
+
     # -- writes ---------------------------------------------------------------
 
     def create_playlist(self, name: str, description: str = "", public: bool = False) -> Playlist:
@@ -72,6 +151,33 @@ class SpotifyService:
         _, playlist_id = parse_ref(playlist_ref, "playlist")
         uris = [to_uri(*parse_ref(ref, "track")) for ref in track_refs]
         return self._repo.remove_items(playlist_id, uris)
+
+    def update_playlist(
+        self,
+        ref: str,
+        name: str | None = None,
+        description: str | None = None,
+        public: bool | None = None,
+    ) -> None:
+        changes: dict[str, Any] = {
+            key: value
+            for key, value in {"name": name, "description": description, "public": public}.items()
+            if value is not None
+        }
+        if not changes:
+            raise ValueError("Nothing to update: provide name, description, or public")
+        _, playlist_id = parse_ref(ref, "playlist")
+        self._repo.update_playlist(playlist_id, changes)
+
+    def delete_playlist(self, ref: str) -> str:
+        """Unfollow (= delete, for owned playlists). Returns the playlist name.
+
+        Spotify keeps unfollowed playlists recoverable for 90 days via their
+        account page, so this is softer than it sounds - still confirm-gated."""
+        _, playlist_id = parse_ref(ref, "playlist")
+        name = self._repo.get_playlist(playlist_id).name
+        self._repo.unfollow_playlist(playlist_id)
+        return name
 
     # -- legacy workflows -------------------------------------------------------
 

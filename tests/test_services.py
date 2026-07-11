@@ -103,6 +103,68 @@ class FakeRepo:
     def recently_played(self, limit: int = 20) -> list[PlayedItem]:
         return []
 
+    def playback_state(self) -> dict[str, Any] | None:
+        return None
+
+    def devices(self) -> list[dict[str, Any]]:
+        return []
+
+    def start_playback(
+        self,
+        device_id: str | None = None,
+        context_uri: str | None = None,
+        uris: Sequence[str] | None = None,
+    ) -> None:
+        self.calls.append(("play", (device_id, context_uri, tuple(uris or ()))))
+
+    def pause_playback(self, device_id: str | None = None) -> None:
+        self.calls.append(("pause", device_id))
+
+    def skip_next(self) -> None:
+        self.calls.append(("next", None))
+
+    def skip_previous(self) -> None:
+        self.calls.append(("previous", None))
+
+    def add_to_queue(self, uri: str) -> None:
+        self.calls.append(("queue", uri))
+
+    def set_volume(self, percent: int) -> None:
+        self.calls.append(("volume", percent))
+
+    def top_tracks(
+        self, limit: int = 20, offset: int = 0, time_range: str = "medium_term"
+    ) -> Page[Track]:
+        self.calls.append(("top_tracks", time_range))
+        return {"total": 0, "offset": offset, "items": []}
+
+    def top_artists(
+        self, limit: int = 20, offset: int = 0, time_range: str = "medium_term"
+    ) -> Page[dict[str, Any]]:
+        self.calls.append(("top_artists", time_range))
+        return {"total": 0, "offset": offset, "items": []}
+
+    def save_tracks(self, track_ids: Sequence[str]) -> int:
+        self.calls.append(("save_tracks", list(track_ids)))
+        self.saved_ids.extend(track_ids)
+        return len(track_ids)
+
+    def get_track(self, track_id: str) -> Track:
+        return Track(id=track_id, uri=f"spotify:track:{track_id}", name="T")
+
+    def get_album(self, album_id: str) -> dict[str, Any]:
+        return {"id": album_id, "name": "Al"}
+
+    def get_artist(self, artist_id: str) -> dict[str, Any]:
+        return {"id": artist_id, "name": "Ar"}
+
+    def update_playlist(self, playlist_id: str, changes: dict[str, Any]) -> None:
+        self.calls.append(("update_playlist", (playlist_id, changes)))
+
+    def unfollow_playlist(self, playlist_id: str) -> None:
+        self.calls.append(("unfollow", playlist_id))
+        self.playlists.pop(playlist_id, None)
+
 
 @pytest.fixture
 def repo():
@@ -378,3 +440,96 @@ def test_add_to_playlist_parses_track_urls(service, repo):
 def test_me_is_cached(service, repo):
     assert service.me().id == ME
     assert service.me() is service.me()
+
+
+# -- playback ---------------------------------------------------------------------
+
+
+def test_play_track_ref_uses_uris(service, repo):
+    track = "t" * 22
+    msg = service.play(f"https://open.spotify.com/track/{track}")
+    assert repo.calls == [("play", (None, None, (f"spotify:track:{track}",)))]
+    assert "track" in msg
+
+
+def test_play_playlist_ref_uses_context(service, repo):
+    msg = service.play(f"spotify:playlist:{PL_A}", device_id="d1")
+    assert repo.calls == [("play", ("d1", f"spotify:playlist:{PL_A}", ()))]
+    assert "playlist" in msg
+
+
+def test_play_without_ref_resumes(service, repo):
+    assert service.play() == "Resumed playback."
+    assert repo.calls == [("play", (None, None, ()))]
+
+
+def test_bare_id_play_assumes_track(service, repo):
+    service.play("t" * 22)
+    assert repo.calls == [("play", (None, None, (f"spotify:track:{'t' * 22}",)))]
+
+
+def test_volume_validation(service, repo):
+    with pytest.raises(ValueError, match="0-100"):
+        service.set_volume(150)
+    assert repo.calls == []
+    service.set_volume(30)
+    assert repo.calls == [("volume", 30)]
+
+
+def test_queue_add_parses_track_ref(service, repo):
+    track = "t" * 22
+    service.queue_add(f"https://open.spotify.com/track/{track}?si=x")
+    assert repo.calls == [("queue", f"spotify:track:{track}")]
+
+
+# -- personalization / lookup -------------------------------------------------------
+
+
+def test_time_range_aliases_and_validation(service, repo):
+    service.top_tracks("short")
+    service.top_artists("long_term")
+    assert repo.calls == [("top_tracks", "short_term"), ("top_artists", "long_term")]
+    with pytest.raises(ValueError, match="time_range"):
+        service.top_tracks("yearly")
+
+
+def test_lookup_dispatches_by_ref_type(service, repo):
+    track = "t" * 22
+    assert service.lookup(f"spotify:track:{track}")["type"] == "track"
+    assert service.lookup(f"spotify:album:{track}")["type"] == "album"
+    assert service.lookup(f"spotify:artist:{track}")["type"] == "artist"
+    repo.add_playlist(PL_A, "P")
+    assert service.lookup(f"spotify:playlist:{PL_A}")["type"] == "playlist"
+    with pytest.raises(ValueError):  # bare IDs are ambiguous for lookup
+        service.lookup(track)
+
+
+# -- library save/remove -------------------------------------------------------------
+
+
+def test_save_library_tracks_parses_refs(service, repo):
+    track = "t" * 22
+    assert service.save_library_tracks([f"https://open.spotify.com/track/{track}"]) == 1
+    assert repo.calls == [("save_tracks", [track])]
+
+
+# -- playlist management --------------------------------------------------------------
+
+
+def test_update_playlist_sends_only_provided_fields(service, repo):
+    repo.add_playlist(PL_A, "Old")
+    service.update_playlist(PL_A, name="New", public=False)
+    assert repo.calls == [("update_playlist", (PL_A, {"name": "New", "public": False}))]
+
+
+def test_update_playlist_with_no_changes_raises(service, repo):
+    with pytest.raises(ValueError, match="Nothing to update"):
+        service.update_playlist(PL_A)
+    assert repo.calls == []
+
+
+def test_delete_playlist_unfollows_and_returns_name(service, repo):
+    repo.add_playlist(PL_A, "Doomed")
+    assert service.delete_playlist(PL_A) == "Doomed"
+    assert ("unfollow", PL_A) in repo.calls
+    assert PL_A not in repo.playlists
