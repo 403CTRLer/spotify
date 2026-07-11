@@ -32,7 +32,7 @@ def cmd_auth(args: argparse.Namespace) -> int:
 def cmd_serve(args: argparse.Namespace) -> int:
     from spotify_mcp.mcp.server import main as serve_main  # lazy: CLI cmds skip MCP import
 
-    serve_main()
+    serve_main(verbosity=max(args.verbose, 1))  # server logs at least INFO (review #11)
     return 0
 
 
@@ -55,7 +55,7 @@ def cmd_shuffle(args: argparse.Namespace) -> int:
 
 
 def cmd_shuffle_all(args: argparse.Namespace) -> int:
-    ignore = [term for chunk in args.ignore for term in chunk.split(",")]
+    ignore = [term for chunk in args.ignore or [] for term in chunk.split(",")]
     for name, status in _service().shuffle_all_owned(ignore):
         print(f"{status:>8}: {name}")
     return 0
@@ -81,7 +81,10 @@ def cmd_clear_liked(args: argparse.Namespace) -> int:
     if total == 0:
         print("No saved tracks.")
         return 0
-    answer = input(f"Delete ALL {total} saved tracks? This cannot be undone. [y/N] ")
+    try:
+        answer = input(f"Delete ALL {total} saved tracks? This cannot be undone. [y/N] ")
+    except EOFError:  # piped/closed stdin can never confirm a destructive action
+        answer = ""
     if answer.strip().lower() not in {"y", "yes"}:
         print("Aborted.")
         return 1
@@ -122,7 +125,7 @@ def build_parser() -> argparse.ArgumentParser:
     shuffle_all.add_argument(
         "--ignore",
         action="append",
-        default=[],
+        default=None,  # argparse appends INTO a list default, leaking across parses
         help="Playlists to skip: links, IDs, or partial names (repeatable or comma-separated)",
     )
     shuffle_all.set_defaults(func=cmd_shuffle_all)

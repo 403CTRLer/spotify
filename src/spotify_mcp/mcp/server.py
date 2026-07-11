@@ -11,8 +11,8 @@ def build_server() -> FastMCP:
     return app
 
 
-def main() -> None:
-    configure_logging(1)  # INFO to stderr; stdout is the protocol channel
+def main(verbosity: int = 1) -> None:
+    configure_logging(verbosity)  # stderr only; stdout is the protocol channel
     build_server().run()
 
 
