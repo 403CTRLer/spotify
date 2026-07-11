@@ -73,8 +73,75 @@ def test_shuffle_force_flag_wired_through(monkeypatch):
     assert seen["force"] is True
 
 
-@pytest.mark.parametrize("argv", [["mix", "--into", "t"], ["restore"], ["shuffle"]])
+@pytest.mark.parametrize(
+    "argv",
+    [["mix", "--into", "t"], ["restore"], ["shuffle"], ["queue"], ["volume"], ["top"]],
+)
 def test_missing_required_args_exit_2(argv):
     with pytest.raises(SystemExit) as exc_info:
         cli.build_parser().parse_args(argv)
     assert exc_info.value.code == 2
+
+
+def test_json_flag_emits_machine_readable_lookup(monkeypatch, capsys):
+    import json
+
+    class LookupStub:
+        def lookup(self, ref):
+            return {"type": "track", "name": "Song", "artists": ["A"]}
+
+    monkeypatch.setattr(cli, "_service", lambda: LookupStub())
+    assert cli.main(["--json", "lookup", "spotify:track:" + "t" * 22]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "type": "track",
+        "name": "Song",
+        "artists": ["A"],
+    }
+
+
+def test_play_wires_item_and_device(monkeypatch, capsys):
+    seen = {}
+
+    class PlayStub:
+        def play(self, item, device_id):
+            seen["args"] = (item, device_id)
+            return "Playing track x."
+
+    monkeypatch.setattr(cli, "_service", lambda: PlayStub())
+    assert cli.main(["play", "t" * 22, "--device", "d1"]) == 0
+    assert seen["args"] == ("t" * 22, "d1")
+
+
+def test_delete_playlist_refusal_makes_no_call(monkeypatch, capsys):
+    from spotify_mcp.models.schemas import Playlist
+
+    class DeleteStub:
+        deleted = False
+
+        def get_playlist(self, ref):
+            return Playlist(id="p" * 22, uri="u", name="Mix", total_tracks=3)
+
+        def delete_playlist(self, ref):
+            self.deleted = True
+            return "Mix"
+
+    stub = DeleteStub()
+    monkeypatch.setattr(cli, "_service", lambda: stub)
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    assert cli.main(["delete-playlist", "p" * 22]) == 1
+    assert not stub.deleted
+    assert "Aborted." in capsys.readouterr().out
+
+
+def test_update_playlist_visibility_flags(monkeypatch):
+    seen = {}
+
+    class UpdateStub:
+        def update_playlist(self, ref, name, description, public):
+            seen["public"] = public
+
+    monkeypatch.setattr(cli, "_service", lambda: UpdateStub())
+    cli.main(["update-playlist", "p" * 22, "--private"])
+    assert seen["public"] is False
+    cli.main(["update-playlist", "p" * 22, "--name", "X"])
+    assert seen["public"] is None
