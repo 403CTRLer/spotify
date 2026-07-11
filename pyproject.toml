@@ -1,0 +1,46 @@
+[project]
+name = "spotify-mcp"
+version = "0.1.0"
+description = "Lightweight Spotify Web API service layer with a CLI and an MCP server"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "mcp>=1.2",
+    "pydantic>=2.7",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4",
+    "pyright>=1.1",
+    "pytest>=8",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/spotify_mcp"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+# Legacy code is preserved as-is until its removal commit
+extend-exclude = ["main"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
