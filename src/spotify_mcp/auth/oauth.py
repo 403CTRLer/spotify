@@ -169,7 +169,10 @@ class SpotifyAuth:
             return new["access_token"]
 
     def _token_request(self, data: dict[str, str]) -> dict[str, Any]:
-        resp = httpx.post(TOKEN_URL, data=data, timeout=30)
+        try:
+            resp = httpx.post(TOKEN_URL, data=data, timeout=30)
+        except httpx.HTTPError as exc:  # keep network failures inside the error family
+            raise AuthError(f"Could not reach Spotify's token endpoint: {exc}") from exc
         if resp.status_code != 200:
             raise AuthError(f"Token request failed ({resp.status_code}): {resp.text}")
         payload: dict[str, Any] = resp.json()
@@ -189,7 +192,15 @@ class SpotifyAuth:
 
     def _load(self) -> dict[str, Any] | None:
         try:
-            self._tokens = json.loads(self._cache_path.read_text(encoding="utf-8"))
+            tokens = json.loads(self._cache_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
+        # a malformed cache (missing keys, wrong types) is the same as no cache
+        if (
+            not isinstance(tokens, dict)
+            or not isinstance(tokens.get("access_token"), str)
+            or not isinstance(tokens.get("expires_at"), int | float)
+        ):
+            return None
+        self._tokens = tokens
         return self._tokens

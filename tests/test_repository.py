@@ -111,6 +111,14 @@ def test_playlist_from_api_tolerates_missing_fields():
     assert playlist.total_tracks == 0
 
 
+def test_playlist_from_api_missing_id_raises_value_error():
+    # review #4c: malformed API items raise ValueError (caught by the CLI), not KeyError
+    import pytest
+
+    with pytest.raises(ValueError, match="missing an id"):
+        Playlist.from_api({"name": "ghost"})
+
+
 def test_my_playlists_maps_page():
     payload = {
         "total": 2,

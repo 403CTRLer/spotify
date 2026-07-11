@@ -45,9 +45,12 @@ class Playlist(BaseModel):
 
     @classmethod
     def from_api(cls, item: dict[str, Any]) -> "Playlist":
+        playlist_id = item.get("id")
+        if not playlist_id:  # keep malformed API data inside the ValueError family
+            raise ValueError(f"Playlist data from the API is missing an id: {item!r:.120}")
         return cls(
-            id=item["id"],
-            uri=item.get("uri") or to_uri("playlist", item["id"]),
+            id=playlist_id,
+            uri=item.get("uri") or to_uri("playlist", playlist_id),
             name=item.get("name") or "",
             owner_id=(item.get("owner") or {}).get("id") or "",
             public=item.get("public"),

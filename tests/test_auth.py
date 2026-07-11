@@ -82,6 +82,30 @@ def test_refresh_adopts_rotated_refresh_token(auth, monkeypatch):
     assert auth._load()["refresh_token"] == "rt-2"
 
 
+def test_network_failure_during_token_request_raises_auth_error(auth, monkeypatch):
+    # review #4a: httpx transport errors must not escape the SpotifyMcpError family
+    import httpx
+
+    import spotify_mcp.auth.oauth as oauth_module
+
+    def explode(*args, **kwargs):
+        raise httpx.ConnectError("network down")
+
+    monkeypatch.setattr(oauth_module.httpx, "post", explode)
+    with pytest.raises(AuthError, match="token endpoint"):
+        auth._token_request({"grant_type": "refresh_token"})
+
+
+def test_malformed_cache_is_treated_as_unauthenticated(auth, tmp_path):
+    # review #4b: a valid-JSON-but-wrong-shape cache must not raise KeyError
+    (tmp_path / "tokens.json").write_text("{}")
+    with pytest.raises(AuthError, match="spotify-mcp auth"):
+        auth.get_token()
+    (tmp_path / "tokens.json").write_text('{"access_token": 42, "expires_at": "soon"}')
+    with pytest.raises(AuthError, match="spotify-mcp auth"):
+        auth.get_token()
+
+
 def test_concurrent_refresh_hits_token_endpoint_once(auth, monkeypatch):
     # review #3: concurrent refreshes must not both present the same rotating
     # refresh token - the second caller reuses the first caller's result
