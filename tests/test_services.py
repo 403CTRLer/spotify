@@ -276,7 +276,7 @@ def test_mix_with_nothing_new_is_a_noop_add(service, repo):
 def test_restore_replaces_playlist_and_deletes_snapshot(service, repo, tmp_path):
     import json
 
-    repo.add_playlist(PL_A, "Broken", uris=[uri(9)])
+    repo.add_playlist(PL_A, "Broken", uris=[uri(1)])  # failure state: subset of snapshot
     snapshot = tmp_path / "snap.json"
     snapshot.write_text(
         json.dumps(
@@ -293,6 +293,41 @@ def test_restore_replaces_playlist_and_deletes_snapshot(service, repo, tmp_path)
     assert skipped == ["spotify:local:x"]
     assert repo.playlist_uris[PL_A] == [uri(1), uri(2)]
     assert not snapshot.exists()  # consumed on success
+
+
+def test_restore_refuses_when_playlist_gained_tracks(service, repo, tmp_path):
+    # restore semantics: replace-restore must not silently discard edits made
+    # after the failure it is recovering from
+    import json
+
+    from spotify_mcp.exceptions.errors import RestoreConflictError
+
+    repo.add_playlist(PL_A, "Edited", uris=[uri(1), uri(9)])  # uri(9) added post-failure
+    snapshot = tmp_path / "snap.json"
+    snapshot.write_text(
+        json.dumps({"playlist_id": PL_A, "name": "Edited", "uris": [uri(1), uri(2)]})
+    )
+    with pytest.raises(RestoreConflictError, match="gained 1 track"):
+        service.restore_snapshot(snapshot)
+    assert repo.playlist_uris[PL_A] == [uri(1), uri(9)]  # untouched
+    assert snapshot.exists()  # kept for a --force retry
+
+    name, count, _ = service.restore_snapshot(snapshot, force=True)
+    assert (name, count) == ("Edited", 2)
+    assert repo.playlist_uris[PL_A] == [uri(1), uri(2)]
+
+
+def test_restore_proceeds_when_playlist_is_subset_of_snapshot(service, repo, tmp_path):
+    # a partially-written playlist (the normal failure state) restores without force
+    import json
+
+    repo.add_playlist(PL_A, "Partial", uris=[uri(1)])
+    snapshot = tmp_path / "snap.json"
+    snapshot.write_text(
+        json.dumps({"playlist_id": PL_A, "name": "Partial", "uris": [uri(1), uri(2)]})
+    )
+    _, count, _ = service.restore_snapshot(snapshot)
+    assert count == 2
 
 
 def test_restore_rejects_malformed_snapshots(service, tmp_path):

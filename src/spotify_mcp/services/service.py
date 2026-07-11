@@ -6,7 +6,7 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
-from spotify_mcp.exceptions.errors import ApiError, LocalTracksError
+from spotify_mcp.exceptions.errors import ApiError, LocalTracksError, RestoreConflictError
 from spotify_mcp.models.schemas import NowPlaying, Page, PlayedItem, Playlist, Track, User
 from spotify_mcp.repository.spotify import SpotifyRepository
 from spotify_mcp.utils.links import parse_ref, to_uri
@@ -172,10 +172,12 @@ class SpotifyService:
         uris = [to_uri("track", track_id) for track_id in self._repo.all_saved_ids()]
         return self._repo.add_items(target_id, uris)
 
-    def restore_snapshot(self, path: Path | str) -> tuple[str, int, list[str]]:
+    def restore_snapshot(self, path: Path | str, force: bool = False) -> tuple[str, int, list[str]]:
         """Replace a playlist's contents from a recovery snapshot, deleting the
         snapshot on success. Returns (name, restored_count, skipped_entries).
 
+        Refuses when the playlist contains tracks that are not in the snapshot
+        (evidence of edits made after the failure) unless `force` is set.
         `skipped_entries` are local/unavailable tracks the snapshot could not
         capture; they cannot be restored via the API."""
         snapshot_path = Path(path)
@@ -186,6 +188,14 @@ class SpotifyService:
         playlist_id, uris = data.get("playlist_id"), data.get("uris")
         if not isinstance(playlist_id, str) or not isinstance(uris, list):
             raise ValueError(f"{snapshot_path} is not a spotify-mcp recovery snapshot")
+        if not force:
+            current, _ = self._repo.all_playlist_uris(playlist_id)
+            foreign = [u for u in current if u not in set(uris)]
+            if foreign:
+                raise RestoreConflictError(
+                    f"The playlist gained {len(foreign)} track(s) after this snapshot was "
+                    "taken; restoring would remove them. Re-run with force to overwrite."
+                )
         self._repo.replace_items(playlist_id, uris)
         snapshot_path.unlink(missing_ok=True)
         name = data.get("name") or playlist_id
