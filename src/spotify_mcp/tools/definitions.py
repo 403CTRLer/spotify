@@ -94,6 +94,136 @@ def recent_history(limit: int = 20) -> list[dict[str, Any]]:
     ]
 
 
+# -- playback (requires Spotify Premium for control commands) ---------------------
+
+
+def playback_state() -> dict[str, Any]:
+    """Current playback state (track, device, shuffle/repeat) and the list of
+    available devices. state is null when nothing is playing."""
+    return get_service().playback()
+
+
+def play(item: str | None = None, device_id: str | None = None) -> str:
+    """Start or resume playback (Premium required). Without `item`, resumes.
+    `item` may be a track/album/playlist/artist URL, URI, or bare track ID.
+    `device_id` (from playback_state) targets a specific device."""
+    return get_service().play(item, device_id)
+
+
+def pause() -> str:
+    """Pause playback on the active device (Premium required)."""
+    get_service().pause()
+    return "Paused."
+
+
+def skip_next() -> str:
+    """Skip to the next track (Premium required)."""
+    get_service().skip_next()
+    return "Skipped to next track."
+
+
+def skip_previous() -> str:
+    """Skip to the previous track (Premium required)."""
+    get_service().skip_previous()
+    return "Skipped to previous track."
+
+
+def queue_add(track: str) -> str:
+    """Add a track (URL, URI, or ID) to the playback queue (Premium required)."""
+    get_service().queue_add(track)
+    return "Added to queue."
+
+
+def set_volume(percent: int) -> str:
+    """Set playback volume, 0-100 (Premium required)."""
+    get_service().set_volume(percent)
+    return f"Volume set to {percent}%."
+
+
+# -- personalization and lookup ------------------------------------------------------
+
+
+def top_items(kind: str = "tracks", time_range: str = "medium", limit: int = 20) -> dict[str, Any]:
+    """The user's most-listened tracks or artists. kind: 'tracks' or 'artists';
+    time_range: 'short' (~4 weeks), 'medium' (~6 months), or 'long' (years)."""
+    service = get_service()
+    if kind == "tracks":
+        return _page(service.top_tracks(time_range, limit))
+    if kind == "artists":
+        page = service.top_artists(time_range, limit)
+        return {"total": page["total"], "offset": page["offset"], "items": page["items"]}
+    raise ValueError("kind must be 'tracks' or 'artists'")
+
+
+def lookup(ref: str) -> dict[str, Any]:
+    """Metadata for any Spotify URL or URI (track, album, artist, or playlist)."""
+    return get_service().lookup(ref)
+
+
+# -- library ---------------------------------------------------------------------
+
+
+def save_to_library(tracks: list[str]) -> str:
+    """Save (like) tracks to the user's library. Accepts URLs, URIs, or IDs."""
+    count = get_service().save_library_tracks(tracks)
+    return f"Saved {count} tracks to your library."
+
+
+def remove_from_library(tracks: list[str]) -> str:
+    """Remove (unlike) tracks from the user's library. Accepts URLs, URIs, or IDs."""
+    count = get_service().remove_library_tracks(tracks)
+    return f"Removed {count} tracks from your library."
+
+
+# -- playlist management (destructive tools use a two-step confirm protocol) ----------
+
+
+def update_playlist(
+    playlist: str,
+    name: str | None = None,
+    description: str | None = None,
+    public: bool | None = None,
+) -> str:
+    """Change a playlist's name, description, or visibility. Only provided
+    fields are changed."""
+    get_service().update_playlist(playlist, name, description, public)
+    return "Playlist updated."
+
+
+def delete_playlist(playlist: str, confirm: bool = False) -> str:
+    """Delete (unfollow) a playlist. DESTRUCTIVE: call once without confirm to
+    get a preview, then again with confirm=true to proceed."""
+    service = get_service()
+    target = service.get_playlist(playlist)
+    if not confirm:
+        return (
+            f"CONFIRMATION REQUIRED: this will delete the playlist {target.name!r} "
+            f"({target.total_tracks} tracks). No changes were made. "
+            "Call delete_playlist again with confirm=true to proceed. "
+            "(Spotify keeps deleted playlists recoverable for 90 days.)"
+        )
+    name = service.delete_playlist(playlist)
+    return f"Deleted playlist {name!r}."
+
+
+def shuffle_playlist(playlist: str, confirm: bool = False, force: bool = False) -> str:
+    """Persistently shuffle a playlist's track order. DESTRUCTIVE to ordering:
+    call once without confirm for a preview, then with confirm=true. A full
+    recovery snapshot is written before any change. Playlists containing local
+    tracks are refused unless force=true (those tracks would be lost)."""
+    service = get_service()
+    target = service.get_playlist(playlist)
+    if not confirm:
+        return (
+            f"CONFIRMATION REQUIRED: this will permanently reorder all "
+            f"{target.total_tracks} tracks of {target.name!r}. A recovery snapshot "
+            "is written first. No changes were made. Call shuffle_playlist again "
+            "with confirm=true to proceed."
+        )
+    count = service.shuffle_playlist(playlist, force=force)
+    return f"Shuffled {count} tracks of {target.name!r}. Recovery snapshot removed after success."
+
+
 ALL_TOOLS = [
     user_profile,
     currently_playing,
@@ -105,4 +235,18 @@ ALL_TOOLS = [
     remove_from_playlist,
     library_tracks,
     recent_history,
+    playback_state,
+    play,
+    pause,
+    skip_next,
+    skip_previous,
+    queue_add,
+    set_volume,
+    top_items,
+    lookup,
+    save_to_library,
+    remove_from_library,
+    update_playlist,
+    delete_playlist,
+    shuffle_playlist,
 ]

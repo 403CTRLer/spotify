@@ -39,6 +39,67 @@ def test_search_defaults_to_track_type(monkeypatch):
     assert stub.search_args == ("query", ("track",), 10)
 
 
+class ConfirmStubService:
+    """Records mutations; playlist metadata is canned."""
+
+    def __init__(self):
+        self.mutations = []
+
+    def get_playlist(self, ref):
+        from spotify_mcp.models.schemas import Playlist
+
+        return Playlist(
+            id="p" * 22, uri="spotify:playlist:" + "p" * 22, name="Mix", total_tracks=42
+        )
+
+    def delete_playlist(self, ref):
+        self.mutations.append(("delete", ref))
+        return "Mix"
+
+    def shuffle_playlist(self, ref, force=False):
+        self.mutations.append(("shuffle", ref, force))
+        return 42
+
+
+def test_delete_playlist_requires_confirmation(monkeypatch):
+    stub = ConfirmStubService()
+    monkeypatch.setattr(tools, "get_service", lambda: stub)
+    message = tools.delete_playlist("p" * 22)
+    assert "CONFIRMATION REQUIRED" in message
+    assert "42 tracks" in message
+    assert stub.mutations == []  # nothing happened without confirm
+
+
+def test_delete_playlist_confirmed_executes(monkeypatch):
+    stub = ConfirmStubService()
+    monkeypatch.setattr(tools, "get_service", lambda: stub)
+    assert "Deleted playlist 'Mix'" in tools.delete_playlist("p" * 22, confirm=True)
+    assert stub.mutations == [("delete", "p" * 22)]
+
+
+def test_shuffle_playlist_requires_confirmation(monkeypatch):
+    stub = ConfirmStubService()
+    monkeypatch.setattr(tools, "get_service", lambda: stub)
+    message = tools.shuffle_playlist("p" * 22)
+    assert "CONFIRMATION REQUIRED" in message
+    assert stub.mutations == []
+
+
+def test_shuffle_playlist_confirmed_passes_force_through(monkeypatch):
+    stub = ConfirmStubService()
+    monkeypatch.setattr(tools, "get_service", lambda: stub)
+    assert "Shuffled 42 tracks" in tools.shuffle_playlist("p" * 22, confirm=True, force=True)
+    assert stub.mutations == [("shuffle", "p" * 22, True)]
+
+
+def test_top_items_rejects_unknown_kind(monkeypatch):
+    monkeypatch.setattr(tools, "get_service", lambda: StubService())
+    import pytest
+
+    with pytest.raises(ValueError, match="tracks.*artists"):
+        tools.top_items(kind="albums")
+
+
 def test_recent_history_dumps_models(monkeypatch):
     monkeypatch.setattr(tools, "get_service", lambda: StubService())
     [item] = tools.recent_history()
