@@ -9,7 +9,9 @@ import sys
 import threading
 import time
 import webbrowser
+from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -30,6 +32,57 @@ SCOPES = (
 )
 LOGIN_TIMEOUT_S = 300
 _EXPIRY_MARGIN_S = 60
+_LOCK_TIMEOUT_S = 15.0
+
+
+@contextlib.contextmanager
+def _interprocess_lock(path: Path, timeout_s: float = _LOCK_TIMEOUT_S) -> Iterator[None]:
+    """Best-effort cross-process lock (msvcrt on Windows, flock elsewhere).
+
+    Serializes token refresh between processes sharing one cache (CLI + MCP
+    server). On timeout it logs and proceeds unlocked - a rare double refresh
+    beats deadlocking the player."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+b")
+    acquired = False
+    deadline = time.monotonic() + timeout_s
+    try:
+        while True:
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except OSError:
+                if time.monotonic() > deadline:
+                    log.warning(
+                        "Refresh lock %s not acquired within %ss; proceeding unlocked",
+                        path,
+                        timeout_s,
+                    )
+                    break
+                time.sleep(0.05)
+        yield
+    finally:
+        if acquired:
+            with contextlib.suppress(OSError):
+                if sys.platform == "win32":
+                    import msvcrt
+
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
 
 
 def make_challenge(verifier: str) -> str:
@@ -166,7 +219,10 @@ class SpotifyAuth:
         process already refreshed, that token is reused instead (review #3).
         """
         entry_token = (self._tokens or {}).get("access_token")
-        with self._refresh_lock:
+        with (
+            self._refresh_lock,
+            _interprocess_lock(self._cache_path.with_suffix(".lock")),
+        ):
             tokens = self._load()
             if (
                 tokens

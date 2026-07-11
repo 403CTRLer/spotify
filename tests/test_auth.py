@@ -141,6 +141,45 @@ def test_concurrent_refresh_hits_token_endpoint_once(auth, monkeypatch):
     assert results == ["at-new", "at-new"]
 
 
+def test_file_lock_serializes_refresh_across_instances(tmp_path, monkeypatch):
+    # cross-process race remediation: two SpotifyAuth instances (as CLI + MCP
+    # server would be) share only the cache file - the interprocess file lock
+    # plus disk re-read must yield exactly ONE HTTP refresh
+    settings = Settings(client_id="cid", state_dir=tmp_path)
+    a, b = SpotifyAuth(settings), SpotifyAuth(settings)
+    a._save(_tokens(expires_at=time.time() - 10))
+    b._load()  # b now also holds the stale token in memory
+    calls = []
+    b_started = threading.Event()
+
+    def slow_refresh(data):
+        calls.append(data["refresh_token"])
+        b_started.wait(timeout=5)
+        time.sleep(0.1)  # keep the file lock held while b blocks on it
+        return _tokens(access_token="at-new", refresh_token="rt-new")
+
+    monkeypatch.setattr(a, "_token_request", slow_refresh)
+    monkeypatch.setattr(b, "_token_request", slow_refresh)
+    results = []
+
+    def run_a():
+        results.append(a.refresh_now())
+
+    def run_b():
+        b_started.set()
+        results.append(b.refresh_now())
+
+    t1, t2 = threading.Thread(target=run_a), threading.Thread(target=run_b)
+    t1.start()
+    time.sleep(0.03)  # a acquires the locks first
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert calls == ["rt-1"]  # one refresh total, across both instances
+    assert results == ["at-new", "at-new"]
+
+
 def test_refresh_reuses_token_refreshed_by_another_process(auth, tmp_path, monkeypatch):
     # instance holds a stale in-memory token; another process already wrote a
     # fresh cache to disk - refresh_now must reuse it without an HTTP call
