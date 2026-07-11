@@ -49,7 +49,7 @@ def cmd_mix(args: argparse.Namespace) -> int:
 
 
 def cmd_shuffle(args: argparse.Namespace) -> int:
-    count = _service().shuffle_playlist(args.playlist)
+    count = _service().shuffle_playlist(args.playlist, force=args.force)
     print(f"Shuffled {count} tracks.")
     return 0
 
@@ -103,6 +103,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     shuffle = sub.add_parser("shuffle", help="Persistently shuffle a playlist")
     shuffle.add_argument("playlist", help="Playlist link, URI, or ID")
+    shuffle.add_argument(
+        "--force",
+        action="store_true",
+        help="Shuffle even if local/unavailable tracks would be permanently dropped",
+    )
     shuffle.set_defaults(func=cmd_shuffle)
 
     shuffle_all = sub.add_parser("shuffle-all", help="Shuffle every playlist you own")

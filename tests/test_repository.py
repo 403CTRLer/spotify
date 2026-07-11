@@ -68,9 +68,16 @@ def test_all_playlist_uris_skips_null_and_local_tracks():
         return httpx.Response(200, json={"items": items, "next": None})
 
     repo = make_repo(handler)
-    assert repo.all_playlist_uris("pl") == [
+    uris, skipped = repo.all_playlist_uris("pl")
+    assert uris == [
         "spotify:track:" + "a" * 22,
         "spotify:track:" + "b" * 22,
+    ]
+    # review #1: the skipped local/unavailable entries are surfaced, not silently dropped
+    assert skipped == [
+        "unavailable track (removed from catalog)",
+        "unavailable track (removed from catalog)",
+        "spotify:local:x",
     ]
 
 

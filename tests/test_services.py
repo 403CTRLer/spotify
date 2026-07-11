@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from spotify_mcp.exceptions.errors import ApiError
+from spotify_mcp.exceptions.errors import ApiError, LocalTracksError
 from spotify_mcp.models.schemas import Playlist, User
 from spotify_mcp.services.service import SpotifyService
 
@@ -23,6 +23,7 @@ class FakeRepo:
     def __init__(self):
         self.playlists: dict[str, Playlist] = {}
         self.playlist_uris: dict[str, list[str]] = {}
+        self.playlist_skipped: dict[str, list[str]] = {}  # local/unavailable per playlist
         self.saved_ids: list[str] = []
         self.calls: list[tuple[str, Any]] = []
         self.on_replace = None  # optional hook: (playlist_id, uris) -> None
@@ -54,8 +55,10 @@ class FakeRepo:
     def playlist_items(self, playlist_id: str, limit: int = 100, offset: int = 0) -> dict[str, Any]:
         return {"total": len(self.playlist_uris[playlist_id]), "offset": offset, "items": []}
 
-    def all_playlist_uris(self, playlist_id: str) -> list[str]:
-        return list(self.playlist_uris[playlist_id])
+    def all_playlist_uris(self, playlist_id: str) -> tuple[list[str], list[str]]:
+        return list(self.playlist_uris[playlist_id]), list(
+            self.playlist_skipped.get(playlist_id, [])
+        )
 
     def album_track_uris(self, album_id: str) -> list[str]:
         return []
@@ -159,6 +162,44 @@ def test_shuffle_empty_playlist_is_noop(service, repo):
     repo.add_playlist(PL_A, "Empty")
     assert service.shuffle_playlist(PL_A) == 0
     assert repo.calls == []
+
+
+# -- shuffle: local/unavailable track guard (review #1) -------------------------
+
+
+def test_shuffle_refuses_playlists_with_local_tracks(service, repo, tmp_path):
+    repo.add_playlist(PL_A, "Mix", uris=[uri(1)])
+    repo.playlist_skipped[PL_A] = ["spotify:local:me:album:song:180"]
+    with pytest.raises(LocalTracksError, match="1 local/unavailable"):
+        service.shuffle_playlist(PL_A)
+    assert repo.calls == []  # no mutation happened
+    assert not (tmp_path / "recovery").exists()  # and no stray snapshot
+
+
+def test_shuffle_force_shuffles_streamable_and_records_skipped(service, repo, tmp_path):
+    repo.add_playlist(PL_A, "Mix", uris=[uri(1), uri(2)])
+    repo.playlist_skipped[PL_A] = ["spotify:local:me:album:song:180"]
+    seen = {}
+
+    def on_replace(playlist_id, uris):
+        import json
+
+        snapshot = next(iter((tmp_path / "recovery").glob("*.json")))
+        seen["skipped"] = json.loads(snapshot.read_text())["skipped"]
+
+    repo.on_replace = on_replace
+    assert service.shuffle_playlist(PL_A, force=True) == 2
+    assert seen["skipped"] == ["spotify:local:me:album:song:180"]
+
+
+def test_shuffle_all_skips_playlists_with_local_tracks(service, repo):
+    repo.add_playlist(PL_A, "Clean", uris=[uri(1)])
+    repo.add_playlist(PL_B, "HasLocals", uris=[uri(2)])
+    repo.playlist_skipped[PL_B] = ["spotify:local:x"]
+    results = dict(service.shuffle_all_owned())
+    assert results["Clean"] == "shuffled"
+    assert results["HasLocals"].startswith("skipped")
+    assert repo.playlist_uris[PL_B] == [uri(2)]  # untouched
 
 
 # -- shuffle_all_owned: ignore-list logic (legacy bugs 1 + 2) -------------------

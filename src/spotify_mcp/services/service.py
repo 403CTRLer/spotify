@@ -6,7 +6,7 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
-from spotify_mcp.exceptions.errors import ApiError
+from spotify_mcp.exceptions.errors import ApiError, LocalTracksError
 from spotify_mcp.models.schemas import Playlist, User
 from spotify_mcp.repository.spotify import SpotifyRepository
 from spotify_mcp.utils.links import parse_ref, to_uri
@@ -81,7 +81,8 @@ class SpotifyService:
         if kind == "track":
             return [to_uri("track", spotify_id)]
         if kind == "playlist":
-            return self._repo.all_playlist_uris(spotify_id)
+            uris, _skipped = self._repo.all_playlist_uris(spotify_id)
+            return uris
         if kind == "album":
             return self._repo.album_track_uris(spotify_id)
         raise ValueError(f"Cannot collect tracks from a {kind} reference: {ref!r}")
@@ -99,15 +100,24 @@ class SpotifyService:
         self._repo.add_items(target_id, unique)
         return len(unique), len(collected) - len(unique)
 
-    def shuffle_playlist(self, ref: str) -> int:
+    def shuffle_playlist(self, ref: str, force: bool = False) -> int:
         """Persistently shuffle a playlist. Snapshots the full track list to disk
-        BEFORE any mutation; the snapshot is removed only after success."""
+        BEFORE any mutation; the snapshot is removed only after success.
+
+        Refuses to run when the playlist holds local/unavailable tracks (the
+        rewrite would permanently drop them) unless `force` is set."""
         _, playlist_id = parse_ref(ref, "playlist")
         playlist = self._repo.get_playlist(playlist_id)
-        uris = self._repo.all_playlist_uris(playlist_id)
+        uris, skipped = self._repo.all_playlist_uris(playlist_id)
+        if skipped and not force:
+            raise LocalTracksError(
+                f"{playlist.name!r} contains {len(skipped)} local/unavailable track(s) that a "
+                "shuffle would permanently remove (the API cannot re-add them). "
+                "Re-run with force to shuffle only the streamable tracks."
+            )
         if not uris:
             return 0
-        snapshot = self._write_snapshot(playlist, uris)
+        snapshot = self._write_snapshot(playlist, uris, skipped)
         random.shuffle(uris)
         try:
             self._repo.replace_items(playlist_id, uris)
@@ -145,7 +155,11 @@ class SpotifyService:
             if playlist.id in ignored_ids or any(term in name for term in name_terms):
                 yield playlist.name, "ignored"
                 continue
-            self.shuffle_playlist(playlist.id)
+            try:
+                self.shuffle_playlist(playlist.id)
+            except LocalTracksError:
+                yield playlist.name, "skipped (contains local/unavailable tracks)"
+                continue
             yield playlist.name, "shuffled"
 
     def saved_to_playlist(self, target_ref: str) -> int:
@@ -160,11 +174,21 @@ class SpotifyService:
 
     # -- internals ---------------------------------------------------------------
 
-    def _write_snapshot(self, playlist: Playlist, uris: list[str]) -> Path:
+    def _write_snapshot(
+        self, playlist: Playlist, uris: list[str], skipped: list[str] | None = None
+    ) -> Path:
         self._recovery_dir.mkdir(parents=True, exist_ok=True)
         path = self._recovery_dir / f"{playlist.id}-{int(time.time())}.json"
         path.write_text(
-            json.dumps({"playlist_id": playlist.id, "name": playlist.name, "uris": uris}, indent=2),
+            json.dumps(
+                {
+                    "playlist_id": playlist.id,
+                    "name": playlist.name,
+                    "uris": uris,
+                    "skipped": skipped or [],
+                },
+                indent=2,
+            ),
             encoding="utf-8",
         )
         return path

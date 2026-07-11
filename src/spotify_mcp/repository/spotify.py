@@ -23,7 +23,7 @@ class SpotifyRepository(Protocol):
     def playlist_items(
         self, playlist_id: str, limit: int = 100, offset: int = 0
     ) -> dict[str, Any]: ...
-    def all_playlist_uris(self, playlist_id: str) -> list[str]: ...
+    def all_playlist_uris(self, playlist_id: str) -> tuple[list[str], list[str]]: ...
     def album_track_uris(self, album_id: str) -> list[str]: ...
     def search(self, query: str, types: Sequence[str], limit: int = 10) -> dict[str, Any]: ...
     def create_playlist(
@@ -83,14 +83,22 @@ class SpotifyApiRepository:
             ],
         }
 
-    def all_playlist_uris(self, playlist_id: str) -> list[str]:
+    def all_playlist_uris(self, playlist_id: str) -> tuple[list[str], list[str]]:
+        """Returns (streamable_uris, skipped) where skipped describes local and
+        null/unavailable tracks the Web API cannot re-add."""
         uris: list[str] = []
+        skipped: list[str] = []
         for item in self._client.paginate(f"/playlists/{playlist_id}/tracks", limit=100):
-            track = Track.from_api((item or {}).get("track") or {})
-            # local and null tracks cannot be re-added via the API; skip them
-            if track.uri and not track.is_local:
-                uris.append(track.uri)
-        return uris
+            raw = (item or {}).get("track")
+            if not raw:
+                skipped.append("unavailable track (removed from catalog)")
+                continue
+            track = Track.from_api(raw)
+            if track.is_local or not track.uri:
+                skipped.append(track.uri or track.name or "unknown local track")
+                continue
+            uris.append(track.uri)
+        return uris, skipped
 
     def album_track_uris(self, album_id: str) -> list[str]:
         return [
