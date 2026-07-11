@@ -1,53 +1,36 @@
-# Contributing to Spotify
-We love your input! We want to make contributing to this project as easy and transparent as possible, whether it's:
+# Contributing
 
-- Reporting a bug
-- Discussing the current state of the code
-- Submitting a fix
-- Proposing new features
-- Becoming a maintainer
+Contributions are welcome: bug reports, fixes, features, and docs.
 
-## We Develop with Github
-We use github to host code, to track issues and feature requests, as well as accept pull requests.
+## Workflow
 
-## We Use [Github Flow](https://guides.github.com/introduction/flow/index.html), So All Code Changes Happen Through Pull Requests
-Pull requests are the best way to propose changes to the codebase (we use [Github Flow](https://guides.github.com/introduction/flow/index.html)). We actively welcome your pull requests:
+1. Fork/branch from `main` (the `legacy` branch is frozen).
+2. Set up: `uv sync && uv run pre-commit install`.
+3. Make your change; add or update tests for anything with logic.
+4. Run the gate locally - CI runs the same:
 
-1. Fork the repo and create your branch from `master`.
-2. If you've added code that should be tested, add tests.
-3. If you've changed APIs, update the documentation.
-4. Ensure the test suite passes.
-5. Make sure your code lints.
-6. Issue that pull request!
+```sh
+uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run pytest
+```
 
-## Any contributions you make will be under the MIT Software License
-In short, when you submit code changes, your submissions are understood to be under the same [MIT License](http://choosealicense.com/licenses/mit/) that covers the project. Feel free to contact the maintainers if that's a concern.
+5. Open a pull request against `main` with a conventional-commit style title
+   (e.g. `feat(services): ...`, `fix(auth): ...`).
 
-## Report bugs using Github's [issues](https://github.com/Gaming-Rowdies/spotify/issues)
-We use GitHub issues to track public bugs. Report a bug by [opening a new issue](https://github.com/Gaming-Rowdies/spotify/issues/new/choose); it's that easy!
+## Ground rules
 
-## Write bug reports with detail, background, and sample code
+- No secrets in the repo - configuration comes from `.env` (gitignored);
+  pre-commit and CI run gitleaks.
+- Business logic goes in `services/` against the `SpotifyRepository` protocol;
+  only `cli/` may print or prompt.
+- Keep it minimal: prefer the standard library, avoid new dependencies, and
+  don't add abstractions without a second consumer.
 
-**Great Bug Reports** tend to have:
+## Bug reports
 
-- A quick summary and/or background
-- Steps to reproduce
-  - Be specific!
-  - Give sample code if you can.
-- What you expected would happen
-- What actually happens
-- Notes (possibly including why you think this might be happening, or stuff you tried that didn't work)
-
-People *love* thorough bug reports. I'm not even kidding.
-
-## Use a Consistent Coding Style
-I'm again borrowing these from [Facebook's Guidelines](https://github.com/facebook/draft-js/blob/a9316a723f9e918afde44dea68b5f9f39b7d9b00/CONTRIBUTING.md)
-
-
-* You can try running `autopep8` for style unification
+Open a [GitHub issue](../../issues/new/choose) with steps to reproduce,
+expected vs actual behavior, and sample references (playlist/track links) where relevant.
 
 ## License
-By contributing, you agree that your contributions will be licensed under its MIT License.
 
-## References
-This document was adapted from the open-source contribution guidelines for [Facebook's Draft](https://github.com/facebook/draft-js/blob/a9316a723f9e918afde44dea68b5f9f39b7d9b00/CONTRIBUTING.md)
+By contributing you agree your contributions are licensed under the project's
+[MIT License](LICENSE).

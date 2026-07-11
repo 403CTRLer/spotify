@@ -32,8 +32,6 @@ packages = ["src/spotify_mcp"]
 target-version = "py312"
 line-length = 100
 src = ["src", "tests"]
-# Legacy code is preserved as-is until its removal commit
-extend-exclude = ["main"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
