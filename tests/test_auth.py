@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 
 import pytest
@@ -79,6 +80,55 @@ def test_refresh_adopts_rotated_refresh_token(auth, monkeypatch):
     monkeypatch.setattr(auth, "_token_request", lambda data: dict(response))
     auth.refresh_now()
     assert auth._load()["refresh_token"] == "rt-2"
+
+
+def test_concurrent_refresh_hits_token_endpoint_once(auth, monkeypatch):
+    # review #3: concurrent refreshes must not both present the same rotating
+    # refresh token - the second caller reuses the first caller's result
+    auth._save(_tokens(expires_at=time.time() - 10))
+    calls = []
+    second_entered = threading.Event()
+
+    def slow_refresh(data):
+        calls.append(data["refresh_token"])
+        second_entered.wait(timeout=5)  # hold the lock until thread 2 is in refresh_now
+        time.sleep(0.05)  # let thread 2 capture its entry token and block on the lock
+        return _tokens(access_token="at-new", refresh_token="rt-new")
+
+    monkeypatch.setattr(auth, "_token_request", slow_refresh)
+    results = []
+
+    def first():
+        results.append(auth.refresh_now())
+
+    def second():
+        second_entered.set()
+        results.append(auth.refresh_now())
+
+    t1 = threading.Thread(target=first)
+    t2 = threading.Thread(target=second)
+    t1.start()
+    time.sleep(0.02)  # ensure t1 acquires the lock first
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert calls == ["rt-1"]  # exactly one HTTP refresh, with the pre-rotation token
+    assert results == ["at-new", "at-new"]
+
+
+def test_refresh_reuses_token_refreshed_by_another_process(auth, tmp_path, monkeypatch):
+    # instance holds a stale in-memory token; another process already wrote a
+    # fresh cache to disk - refresh_now must reuse it without an HTTP call
+    auth._save(_tokens(expires_at=time.time() - 10))  # stale, also sets in-memory state
+    fresh = _tokens(access_token="at-other-proc", refresh_token="rt-other-proc")
+    (tmp_path / "tokens.json").write_text(json.dumps(fresh))
+
+    def boom(data):
+        raise AssertionError("no HTTP refresh should happen")
+
+    monkeypatch.setattr(auth, "_token_request", boom)
+    assert auth.refresh_now() == "at-other-proc"
 
 
 def test_login_rejects_state_mismatch(auth, monkeypatch):

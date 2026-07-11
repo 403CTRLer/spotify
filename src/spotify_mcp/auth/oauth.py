@@ -6,6 +6,7 @@ import logging
 import os
 import secrets
 import sys
+import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -61,6 +62,7 @@ class SpotifyAuth:
         self._settings = settings
         self._cache_path = settings.token_cache_path
         self._tokens: dict[str, Any] | None = None
+        self._refresh_lock = threading.Lock()
 
     # -- interactive flow ---------------------------------------------------
 
@@ -133,22 +135,38 @@ class SpotifyAuth:
         return tokens["access_token"]
 
     def refresh_now(self) -> str:
-        tokens = self._tokens or self._load()
-        if not tokens or not tokens.get("refresh_token"):
-            raise AuthError("No refresh token available. Run `spotify-mcp auth`.")
-        log.info("Refreshing access token")
-        new = self._token_request(
-            {
-                "grant_type": "refresh_token",
-                "refresh_token": tokens["refresh_token"],
-                "client_id": self._settings.client_id,
-            }
-        )
-        # Spotify rotates refresh tokens; keep the old one when omitted
-        new.setdefault("refresh_token", tokens["refresh_token"])
-        new.setdefault("scope", tokens.get("scope", ""))
-        self._save(new)
-        return new["access_token"]
+        """Refresh the access token, serialized against concurrent callers.
+
+        Spotify rotates refresh tokens: two concurrent refreshes present the
+        same (now dead) token, which can invalidate the whole grant family.
+        Inside the lock the cache is re-read from disk; if another thread or
+        process already refreshed, that token is reused instead (review #3).
+        """
+        entry_token = (self._tokens or {}).get("access_token")
+        with self._refresh_lock:
+            tokens = self._load()
+            if (
+                tokens
+                and tokens.get("access_token")
+                and tokens["access_token"] != entry_token
+                and tokens.get("expires_at", 0) - _EXPIRY_MARGIN_S > time.time()
+            ):
+                return tokens["access_token"]  # someone else refreshed while we waited
+            if not tokens or not tokens.get("refresh_token"):
+                raise AuthError("No refresh token available. Run `spotify-mcp auth`.")
+            log.info("Refreshing access token")
+            new = self._token_request(
+                {
+                    "grant_type": "refresh_token",
+                    "refresh_token": tokens["refresh_token"],
+                    "client_id": self._settings.client_id,
+                }
+            )
+            # Spotify rotates refresh tokens; keep the old one when omitted
+            new.setdefault("refresh_token", tokens["refresh_token"])
+            new.setdefault("scope", tokens.get("scope", ""))
+            self._save(new)
+            return new["access_token"]
 
     def _token_request(self, data: dict[str, str]) -> dict[str, Any]:
         resp = httpx.post(TOKEN_URL, data=data, timeout=30)
