@@ -24,9 +24,12 @@ jobs:
   secrets:
     runs-on: ubuntu-latest
     steps:
-      # shallow checkout on purpose: scans the pushed state, not the pre-rewrite
-      # history (the legacy branch intentionally preserves a rotated credential)
+      # full history: gitleaks needs the push range, and a deterministic
+      # whole-history scan beats a range scan that breaks on shallow clones.
+      # The one known (rotated) historical leak is pinned in .gitleaksignore.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
       - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

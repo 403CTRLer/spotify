@@ -1,0 +1,4 @@
+# Historical Spotify client secret in pre-rewrite history (legacy branch).
+# The credential was rotated on 2026-07-11 and is dead; history is preserved
+# deliberately. See docs/security.md "Repository history".
+a14383619eb36db3314fc927b93d3545287af07b:main/credentials.py:generic-api-key:8
