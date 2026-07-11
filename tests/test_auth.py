@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from spotify_mcp.auth.oauth import SCOPES, SpotifyAuth, make_challenge
+from spotify_mcp.auth.oauth import SCOPES, SpotifyAuth, make_challenge, parse_callback
 from spotify_mcp.config.settings import Settings
 from spotify_mcp.exceptions.errors import AuthError
 
@@ -153,6 +153,31 @@ def test_refresh_reuses_token_refreshed_by_another_process(auth, tmp_path, monke
 
     monkeypatch.setattr(auth, "_token_request", boom)
     assert auth.refresh_now() == "at-other-proc"
+
+
+@pytest.mark.parametrize(
+    ("request_path", "expected"),
+    [
+        ("/favicon.ico", None),  # review #9: stray requests must not end the wait
+        ("/callback", None),  # right path but no code/error yet
+        ("/other?code=x", None),
+        ("/callback?code=abc&state=s1", {"code": "abc", "state": "s1"}),
+        ("/callback/?error=access_denied", {"error": "access_denied"}),
+    ],
+)
+def test_parse_callback_filters_non_callback_requests(request_path, expected):
+    assert parse_callback(request_path, "/callback") == expected
+
+
+def test_bind_failure_raises_auth_error(auth, monkeypatch):
+    import spotify_mcp.auth.oauth as oauth_module
+
+    def refuse(*args, **kwargs):
+        raise OSError(98, "Address already in use")
+
+    monkeypatch.setattr(oauth_module, "HTTPServer", refuse)
+    with pytest.raises(AuthError, match="Cannot listen"):
+        auth._await_callback("https://example.test/authorize")
 
 
 def test_login_rejects_state_mismatch(auth, monkeypatch):

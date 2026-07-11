@@ -38,10 +38,26 @@ def make_challenge(verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
+def parse_callback(request_path: str, expected_path: str) -> dict[str, str] | None:
+    """Extract OAuth callback params, or None when the request is not the
+    callback (favicon probes, stray local requests) - review #9."""
+    parsed = urlparse(request_path)
+    if parsed.path.rstrip("/") != expected_path.rstrip("/"):
+        return None
+    params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+    if "code" not in params and "error" not in params:
+        return None
+    return params
+
+
 class _CallbackHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 (http.server API)
-        params = parse_qs(urlparse(self.path).query)
-        self.server.result = {k: v[0] for k, v in params.items()}  # type: ignore[attr-defined]
+        result = parse_callback(self.path, self.server.expected_path)  # type: ignore[attr-defined]
+        if result is None:  # not the OAuth callback; keep waiting
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.server.result = result  # type: ignore[attr-defined]
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
@@ -104,7 +120,14 @@ class SpotifyAuth:
         parsed = urlparse(self._settings.redirect_uri)
         host = parsed.hostname or "127.0.0.1"
         port = parsed.port or 80
-        server = HTTPServer((host, port), _CallbackHandler)
+        try:
+            server = HTTPServer((host, port), _CallbackHandler)
+        except OSError as exc:
+            raise AuthError(
+                f"Cannot listen on {host}:{port} for the OAuth callback ({exc}). "
+                "Is the port in use or another login already running?"
+            ) from exc
+        server.expected_path = parsed.path or "/"  # type: ignore[attr-defined]
         server.result = None  # type: ignore[attr-defined]
         server.timeout = 5
         try:
