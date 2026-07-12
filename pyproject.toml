@@ -1,14 +1,30 @@
 [project]
 name = "spotify-mcp"
-version = "0.3.0"
-description = "Lightweight Spotify Web API service layer with a CLI and an MCP server"
+version = "0.4.0"
+description = "A reusable Spotify connector: MCP server and CLI over the Spotify Web API"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.12"
+keywords = ["spotify", "mcp", "model-context-protocol", "cli", "music"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "httpx>=0.27",
     "mcp>=1.2",
     "pydantic>=2.7",
 ]
+
+[project.urls]
+Homepage = "https://github.com/403CTRLer/spotify"
+Issues = "https://github.com/403CTRLer/spotify/issues"
+Changelog = "https://github.com/403CTRLer/spotify/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
