@@ -254,7 +254,7 @@ def test_mix_dedupes_and_reports_duplicates(service, repo):
     repo.add_playlist(PL_A, "Src1", uris=[uri(1), uri(2)])
     repo.add_playlist(PL_B, "Src2", uris=[uri(2), uri(3)])
     repo.add_playlist(PL_C, "Target")
-    added, dupes = service.mix_playlists([pl_uri(PL_A), pl_uri(PL_B)], pl_uri(PL_C))
+    added, dupes = service.mix_playlists([("playlist", PL_A), ("playlist", PL_B)], PL_C)
     assert (added, dupes) == (3, 1)
     assert sorted(repo.playlist_uris[PL_C]) == [uri(1), uri(2), uri(3)]
 
@@ -262,7 +262,7 @@ def test_mix_dedupes_and_reports_duplicates(service, repo):
 def test_mix_never_removes_from_target(service, repo):
     repo.add_playlist(PL_A, "Src", uris=[uri(1), uri(2)])
     repo.add_playlist(PL_C, "Target", uris=[uri(1)])
-    added, dupes = service.mix_playlists([pl_uri(PL_A)], pl_uri(PL_C))
+    added, dupes = service.mix_playlists([("playlist", PL_A)], PL_C)
     assert ("remove", PL_C) not in repo.calls
     assert repo.playlist_uris[PL_C] == [uri(1), uri(2)]
     assert (added, dupes) == (1, 1)
@@ -270,17 +270,15 @@ def test_mix_never_removes_from_target(service, repo):
 
 def test_mix_accepts_track_sources(service, repo):
     repo.add_playlist(PL_C, "Target")
-    added, _ = service.mix_playlists([uri(7)], pl_uri(PL_C))
+    added, _ = service.mix_playlists([("track", f"{7:022d}")], PL_C)
     assert added == 1
     assert repo.playlist_uris[PL_C] == [uri(7)]
 
 
-def test_mix_rejects_bare_and_album_sources(service, repo):
+def test_mix_rejects_non_playlist_track_sources(service, repo):
     repo.add_playlist(PL_C, "Target")
-    with pytest.raises(ValueError):  # bare IDs are ambiguous for mix sources
-        service.mix_playlists(["d" * 22], pl_uri(PL_C))
     with pytest.raises(ValueError, match="playlists or tracks"):
-        service.mix_playlists([f"spotify:album:{'d' * 22}"], pl_uri(PL_C))
+        service.mix_playlists([("album", "d" * 22)], PL_C)
 
 
 # -- saved tracks ----------------------------------------------------------------
@@ -299,19 +297,13 @@ def test_clear_saved_tracks_removes_everything(service, repo):
     assert repo.saved_ids == []
 
 
-# -- ref validation at service boundaries -----------------------------------------
+# -- explicit-identifier surface ---------------------------------------------------
 
 
-def test_playlist_items_rejects_track_ref(service):
-    with pytest.raises(ValueError, match="playlist"):
-        service.playlist_items(f"spotify:track:{'t' * 22}")
-
-
-def test_add_to_playlist_parses_track_urls(service, repo):
+def test_add_to_playlist_formats_ids_as_uris(service, repo):
     repo.add_playlist(PL_A, "Target")
     track = "t" * 22
-    count = service.add_to_playlist(PL_A, [f"https://open.spotify.com/track/{track}?si=1"])
-    assert count == 1
+    assert service.add_to_playlist(PL_A, [track]) == 1
     assert repo.playlist_uris[PL_A] == [f"spotify:track:{track}"]
 
 
@@ -323,20 +315,20 @@ def test_me_is_cached(service, repo):
 # -- playback ---------------------------------------------------------------------
 
 
-def test_play_track_ref_uses_uris(service, repo):
+def test_play_track_uses_uris(service, repo):
     track = "t" * 22
-    msg = service.play(f"https://open.spotify.com/track/{track}")
+    msg = service.play("track", track)
     assert repo.calls == [("play", (None, None, (f"spotify:track:{track}",)))]
     assert "track" in msg
 
 
-def test_play_playlist_ref_uses_context(service, repo):
-    msg = service.play(f"spotify:playlist:{PL_A}", device_id="d1")
+def test_play_playlist_uses_context(service, repo):
+    msg = service.play("playlist", PL_A, device_id="d1")
     assert repo.calls == [("play", ("d1", f"spotify:playlist:{PL_A}", ()))]
     assert "playlist" in msg
 
 
-def test_play_without_ref_resumes(service, repo):
+def test_play_without_item_resumes(service, repo):
     assert service.play() == "Resumed playback."
     assert repo.calls == [("play", (None, None, ()))]
 
@@ -349,9 +341,9 @@ def test_volume_validation(service, repo):
     assert repo.calls == [("volume", 30)]
 
 
-def test_queue_add_parses_track_ref(service, repo):
+def test_queue_add_formats_id_as_uri(service, repo):
     track = "t" * 22
-    service.queue_add(f"https://open.spotify.com/track/{track}?si=x")
+    service.queue_add(track)
     assert repo.calls == [("queue", f"spotify:track:{track}")]
 
 
@@ -366,23 +358,23 @@ def test_time_range_aliases_and_validation(service, repo):
         service.top_tracks("yearly")
 
 
-def test_lookup_dispatches_by_ref_type(service, repo):
+def test_lookup_dispatches_by_kind(service, repo):
     track = "t" * 22
-    assert service.lookup(f"spotify:track:{track}")["type"] == "track"
-    assert service.lookup(f"spotify:album:{track}")["type"] == "album"
-    assert service.lookup(f"spotify:artist:{track}")["type"] == "artist"
+    assert service.lookup("track", track)["type"] == "track"
+    assert service.lookup("album", track)["type"] == "album"
+    assert service.lookup("artist", track)["type"] == "artist"
     repo.add_playlist(PL_A, "P")
-    assert service.lookup(pl_uri(PL_A))["type"] == "playlist"
-    with pytest.raises(ValueError):  # bare IDs are ambiguous for lookup
-        service.lookup(track)
+    assert service.lookup("playlist", PL_A)["type"] == "playlist"
+    with pytest.raises(ValueError, match="look up"):
+        service.lookup("show", track)
 
 
 # -- library save/remove -------------------------------------------------------------
 
 
-def test_save_library_tracks_parses_refs(service, repo):
+def test_save_library_tracks_takes_ids(service, repo):
     track = "t" * 22
-    assert service.save_library_tracks([f"https://open.spotify.com/track/{track}"]) == 1
+    assert service.save_library_tracks([track]) == 1
     assert repo.calls == [("save_tracks", [track])]
 
 

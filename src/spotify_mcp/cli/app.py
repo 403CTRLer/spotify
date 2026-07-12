@@ -14,6 +14,7 @@ from spotify_mcp.config.settings import Settings
 from spotify_mcp.exceptions.errors import SpotifyMcpError
 from spotify_mcp.repository.spotify import SpotifyApiRepository
 from spotify_mcp.services.service import SpotifyService
+from spotify_mcp.utils.links import parse_ref
 from spotify_mcp.utils.logging import configure_logging
 
 
@@ -21,6 +22,16 @@ def _service() -> SpotifyService:
     settings = Settings.from_env()
     repo = SpotifyApiRepository(SpotifyApiClient(SpotifyAuth(settings)))
     return SpotifyService(repo)
+
+
+def _pid(ref: str) -> str:
+    """Boundary normalization: playlist URL/URI/bare -> id."""
+    return parse_ref(ref, "playlist")[1]
+
+
+def _tid(ref: str) -> str:
+    """Boundary normalization: track URL/URI/bare -> id."""
+    return parse_ref(ref, "track")[1]
 
 
 def cmd_auth(args: argparse.Namespace) -> int:
@@ -73,7 +84,13 @@ def cmd_now(args: argparse.Namespace) -> int:
 
 
 def cmd_play(args: argparse.Namespace) -> int:
-    print(_service().play(args.item, args.device))
+    kind = spotify_id = None
+    if args.item:
+        try:
+            kind, spotify_id = parse_ref(args.item)
+        except ValueError:  # bare IDs are treated as tracks at the CLI (documented)
+            kind, spotify_id = parse_ref(args.item, "track")
+    print(_service().play(kind, spotify_id, args.device))
     return 0
 
 
@@ -96,7 +113,7 @@ def cmd_prev(args: argparse.Namespace) -> int:
 
 
 def cmd_queue(args: argparse.Namespace) -> int:
-    _service().queue_add(args.track)
+    _service().queue_add(_tid(args.track))
     print("Added to queue.")
     return 0
 
@@ -123,17 +140,19 @@ def cmd_top(args: argparse.Namespace) -> int:
 
 
 def cmd_like(args: argparse.Namespace) -> int:
-    print(f"Saved {_service().save_library_tracks(args.tracks)} tracks to your library.")
+    track_ids = [_tid(t) for t in args.tracks]
+    print(f"Saved {_service().save_library_tracks(track_ids)} tracks to your library.")
     return 0
 
 
 def cmd_unlike(args: argparse.Namespace) -> int:
-    print(f"Removed {_service().remove_library_tracks(args.tracks)} tracks from your library.")
+    track_ids = [_tid(t) for t in args.tracks]
+    print(f"Removed {_service().remove_library_tracks(track_ids)} tracks from your library.")
     return 0
 
 
 def cmd_lookup(args: argparse.Namespace) -> int:
-    data = _service().lookup(args.ref)
+    data = _service().lookup(*parse_ref(args.ref))
     if _emit_json(args, data):
         return 0
     for key, value in data.items():
@@ -154,7 +173,7 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 
 def cmd_tracks(args: argparse.Namespace) -> int:
-    page = _service().playlist_items(args.playlist, limit=args.limit, offset=args.offset)
+    page = _service().playlist_items(_pid(args.playlist), limit=args.limit, offset=args.offset)
     items = [t.model_dump() for t in page["items"]]
     if _emit_json(args, {"total": page["total"], "offset": page["offset"], "items": items}):
         return 0
@@ -186,14 +205,15 @@ def cmd_create_playlist(args: argparse.Namespace) -> int:
 
 
 def cmd_update_playlist(args: argparse.Namespace) -> int:
-    _service().update_playlist(args.playlist, args.name, args.description, args.public)
+    _service().update_playlist(_pid(args.playlist), args.name, args.description, args.public)
     print("Playlist updated.")
     return 0
 
 
 def cmd_delete_playlist(args: argparse.Namespace) -> int:
     service = _service()
-    target = service.get_playlist(args.playlist)
+    playlist_id = _pid(args.playlist)
+    target = service.get_playlist(playlist_id)
     try:
         answer = input(f"Delete playlist {target.name!r} ({target.total_tracks} tracks)? [y/N] ")
     except EOFError:
@@ -201,25 +221,26 @@ def cmd_delete_playlist(args: argparse.Namespace) -> int:
     if answer.strip().lower() not in {"y", "yes"}:
         print("Aborted.")
         return 1
-    name = service.delete_playlist(args.playlist)
+    name = service.delete_playlist(playlist_id)
     print(f"Deleted {name!r}. (Spotify keeps deleted playlists recoverable for 90 days.)")
     return 0
 
 
 def cmd_mix(args: argparse.Namespace) -> int:
-    added, dupes = _service().mix_playlists(args.sources, args.into)
+    sources = [parse_ref(source) for source in args.sources]  # URL/URI only: bare is ambiguous
+    added, dupes = _service().mix_playlists(sources, _pid(args.into))
     print(f"Added {added} unique tracks ({dupes} duplicates skipped).")
     return 0
 
 
 def cmd_shuffle(args: argparse.Namespace) -> int:
-    count = _service().shuffle_playlist(args.playlist)
+    count = _service().shuffle_playlist(_pid(args.playlist))
     print(f"Shuffled {count} tracks in place.")
     return 0
 
 
 def cmd_liked_to_playlist(args: argparse.Namespace) -> int:
-    count = _service().saved_to_playlist(args.target)
+    count = _service().saved_to_playlist(_pid(args.target))
     print(f"Added {count} liked tracks.")
     return 0
 

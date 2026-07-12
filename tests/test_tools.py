@@ -82,6 +82,24 @@ def test_top_items_rejects_unknown_kind(monkeypatch):
         tools.top_items(kind="albums")
 
 
+def test_tools_normalize_refs_before_the_service(monkeypatch):
+    # boundary rule: services receive bare ids, never URLs/URIs
+    seen = {}
+
+    class BoundaryStub:
+        def add_to_playlist(self, playlist_id, track_ids):
+            seen["args"] = (playlist_id, track_ids)
+            return len(track_ids)
+
+    monkeypatch.setattr(tools, "get_service", lambda: BoundaryStub())
+    playlist = "p" * 22
+    track = "t" * 22
+    tools.add_to_playlist(
+        f"https://open.spotify.com/playlist/{playlist}?si=x", [f"spotify:track:{track}"]
+    )
+    assert seen["args"] == (playlist, [track])
+
+
 def test_recent_history_dumps_models(monkeypatch):
     monkeypatch.setattr(tools, "get_service", lambda: StubService())
     [item] = tools.recent_history()

@@ -14,6 +14,7 @@ from spotify_mcp.client.api_client import SpotifyApiClient
 from spotify_mcp.config.settings import Settings
 from spotify_mcp.repository.spotify import SpotifyApiRepository
 from spotify_mcp.services.service import SpotifyService
+from spotify_mcp.utils.links import parse_ref
 
 
 @lru_cache(maxsize=1)
@@ -31,6 +32,12 @@ def _page(page: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _id(ref: str, kind: str) -> str:
+    """Boundary normalization: URL/URI/bare -> bare id, given the explicit
+    kind the parameter names. Services only ever see ids."""
+    return parse_ref(ref, kind)[1]
+
+
 def user_profile() -> dict[str, Any]:
     """Get the authenticated user's profile (id and display name)."""
     return get_service().me().model_dump()
@@ -43,7 +50,7 @@ def playlists(limit: int = 50, offset: int = 0) -> dict[str, Any]:
 
 def playlist_items(playlist: str, limit: int = 100, offset: int = 0) -> dict[str, Any]:
     """List tracks in a playlist, paged. Accepts a playlist URL, URI, or ID."""
-    return _page(get_service().playlist_items(playlist, limit, offset))
+    return _page(get_service().playlist_items(_id(playlist, "playlist"), limit, offset))
 
 
 def search(query: str, types: list[str] | None = None, limit: int = 10) -> dict[str, Any]:
@@ -59,13 +66,17 @@ def create_playlist(name: str, description: str = "", public: bool = False) -> d
 
 def add_to_playlist(playlist: str, tracks: list[str]) -> str:
     """Add tracks to a playlist. Both accept URLs, URIs, or IDs."""
-    count = get_service().add_to_playlist(playlist, tracks)
+    count = get_service().add_to_playlist(
+        _id(playlist, "playlist"), [_id(t, "track") for t in tracks]
+    )
     return f"Added {count} tracks."
 
 
 def remove_from_playlist(playlist: str, tracks: list[str]) -> str:
     """Remove all occurrences of the given tracks from a playlist."""
-    count = get_service().remove_from_playlist(playlist, tracks)
+    count = get_service().remove_from_playlist(
+        _id(playlist, "playlist"), [_id(t, "track") for t in tracks]
+    )
     return f"Removed {count} tracks."
 
 
@@ -93,9 +104,10 @@ def playback_state() -> dict[str, Any]:
 
 def play(item: str | None = None, device_id: str | None = None) -> str:
     """Start or resume playback (Premium required). Without `item`, resumes.
-    `item` may be a track/album/playlist/artist URL, URI, or bare track ID.
-    `device_id` (from playback_state) targets a specific device."""
-    return get_service().play(item, device_id)
+    `item` must be a track/album/playlist/artist URL or URI (bare IDs are
+    ambiguous here). `device_id` (from playback_state) targets a device."""
+    kind, spotify_id = parse_ref(item) if item else (None, None)
+    return get_service().play(kind, spotify_id, device_id)
 
 
 def pause() -> str:
@@ -118,7 +130,7 @@ def skip_previous() -> str:
 
 def queue_add(track: str) -> str:
     """Add a track (URL, URI, or ID) to the playback queue (Premium required)."""
-    get_service().queue_add(track)
+    get_service().queue_add(_id(track, "track"))
     return "Added to queue."
 
 
@@ -144,8 +156,9 @@ def top_items(kind: str = "tracks", time_range: str = "medium", limit: int = 20)
 
 
 def lookup(ref: str) -> dict[str, Any]:
-    """Metadata for any Spotify URL or URI (track, album, artist, or playlist)."""
-    return get_service().lookup(ref)
+    """Metadata for any Spotify URL or URI (track, album, artist, or playlist).
+    Bare IDs are ambiguous here and rejected."""
+    return get_service().lookup(*parse_ref(ref))
 
 
 # -- library ---------------------------------------------------------------------
@@ -153,13 +166,13 @@ def lookup(ref: str) -> dict[str, Any]:
 
 def save_to_library(tracks: list[str]) -> str:
     """Save (like) tracks to the user's library. Accepts URLs, URIs, or IDs."""
-    count = get_service().save_library_tracks(tracks)
+    count = get_service().save_library_tracks([_id(t, "track") for t in tracks])
     return f"Saved {count} tracks to your library."
 
 
 def remove_from_library(tracks: list[str]) -> str:
     """Remove (unlike) tracks from the user's library. Accepts URLs, URIs, or IDs."""
-    count = get_service().remove_library_tracks(tracks)
+    count = get_service().remove_library_tracks([_id(t, "track") for t in tracks])
     return f"Removed {count} tracks from your library."
 
 
@@ -174,7 +187,7 @@ def update_playlist(
 ) -> str:
     """Change a playlist's name, description, or visibility. Only provided
     fields are changed."""
-    get_service().update_playlist(playlist, name, description, public)
+    get_service().update_playlist(_id(playlist, "playlist"), name, description, public)
     return "Playlist updated."
 
 
@@ -182,7 +195,8 @@ def delete_playlist(playlist: str, confirm: bool = False) -> str:
     """Delete (unfollow) a playlist. DESTRUCTIVE: call once without confirm to
     get a preview, then again with confirm=true to proceed."""
     service = get_service()
-    target = service.get_playlist(playlist)
+    playlist_id = _id(playlist, "playlist")
+    target = service.get_playlist(playlist_id)
     if not confirm:
         return (
             f"CONFIRMATION REQUIRED: this will delete the playlist {target.name!r} "
@@ -190,7 +204,7 @@ def delete_playlist(playlist: str, confirm: bool = False) -> str:
             "Call delete_playlist again with confirm=true to proceed. "
             "(Spotify keeps deleted playlists recoverable for 90 days.)"
         )
-    name = service.delete_playlist(playlist)
+    name = service.delete_playlist(playlist_id)
     return f"Deleted playlist {name!r}."
 
 
@@ -200,7 +214,8 @@ def shuffle_playlist(playlist: str, confirm: bool = False) -> str:
     ordering: call once without confirm for a preview, then with confirm=true.
     Costs about one API request per track, so large playlists take a while."""
     service = get_service()
-    target = service.get_playlist(playlist)
+    playlist_id = _id(playlist, "playlist")
+    target = service.get_playlist(playlist_id)
     if not confirm:
         return (
             f"CONFIRMATION REQUIRED: this will permanently reorder all "
@@ -208,7 +223,7 @@ def shuffle_playlist(playlist: str, confirm: bool = False) -> str:
             "is not recoverable; the tracks themselves are never removed). "
             "No changes were made. Call shuffle_playlist again with confirm=true to proceed."
         )
-    count = service.shuffle_playlist(playlist)
+    count = service.shuffle_playlist(playlist_id)
     return f"Shuffled {count} tracks of {target.name!r} in place."
 
 

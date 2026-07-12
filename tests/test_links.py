@@ -44,14 +44,5 @@ def test_parse_ref_invalid(ref, expect):
         parse_ref(ref, expect)
 
 
-def test_bare_type_does_not_assert_parsed_forms():
-    # bare_type applies to bare IDs only; URLs keep their own type
-    assert parse_ref(PL, bare_type="playlist") == ("playlist", PL)
-    assert parse_ref(f"https://open.spotify.com/track/{TR}", bare_type="playlist") == (
-        "track",
-        TR,
-    )
-
-
 def test_to_uri():
     assert to_uri("track", TR) == f"spotify:track:{TR}"

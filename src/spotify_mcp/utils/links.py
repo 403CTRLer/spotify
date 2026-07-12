@@ -5,13 +5,13 @@ TYPES = {"track", "playlist", "album", "artist"}
 _ID_RE = re.compile(r"[A-Za-z0-9]{22}")
 
 
-def parse_ref(
-    ref: str, expect: str | None = None, *, bare_type: str | None = None
-) -> tuple[str, str]:
-    """Parse a Spotify URL, URI, or bare ID into ``(type, id)``.
+def parse_ref(ref: str, expect: str | None = None) -> tuple[str, str]:
+    """Pure parser: Spotify URL, URI, or bare ID -> ``(type, id)``.
 
-    ``expect`` asserts the parsed type (and doubles as the type for bare IDs).
-    ``bare_type`` sets the type for bare IDs without asserting parsed forms.
+    ``expect`` asserts the parsed type and supplies the type for bare IDs
+    (bare IDs without ``expect`` are ambiguous and rejected). No semantic
+    inference happens here; normalization policy lives at the CLI/MCP
+    boundary, and services receive explicit identifiers.
     """
     ref = ref.strip()
     if not ref:
@@ -31,8 +31,8 @@ def parse_ref(
             if len(segments) != 2:
                 raise ValueError(f"Unrecognized Spotify URL: {ref!r}")
             kind, spotify_id = segments
-        elif expect or bare_type:
-            kind, spotify_id = (bare_type or expect or ""), ref
+        elif expect:
+            kind, spotify_id = expect, ref
         else:
             raise ValueError(
                 f"Bare ID {ref!r} needs an explicit type (one of {', '.join(sorted(TYPES))})"

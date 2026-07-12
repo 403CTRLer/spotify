@@ -79,8 +79,8 @@ def test_json_flag_emits_machine_readable_lookup(monkeypatch, capsys):
     import json
 
     class LookupStub:
-        def lookup(self, ref):
-            return {"type": "track", "name": "Song", "artists": ["A"]}
+        def lookup(self, kind, spotify_id):
+            return {"type": kind, "name": "Song", "artists": ["A"]}
 
     monkeypatch.setattr(cli, "_service", lambda: LookupStub())
     assert cli.main(["--json", "lookup", "spotify:track:" + "t" * 22]) == 0
@@ -91,17 +91,23 @@ def test_json_flag_emits_machine_readable_lookup(monkeypatch, capsys):
     }
 
 
-def test_play_wires_item_and_device(monkeypatch, capsys):
+def test_play_normalizes_bare_ids_to_tracks_at_the_boundary(monkeypatch, capsys):
     seen = {}
 
     class PlayStub:
-        def play(self, item, device_id):
-            seen["args"] = (item, device_id)
+        def play(self, kind, spotify_id, device_id):
+            seen["args"] = (kind, spotify_id, device_id)
             return "Playing track x."
 
     monkeypatch.setattr(cli, "_service", lambda: PlayStub())
     assert cli.main(["play", "t" * 22, "--device", "d1"]) == 0
-    assert seen["args"] == ("t" * 22, "d1")
+    assert seen["args"] == ("track", "t" * 22, "d1")  # CLI resolved the bare ID
+
+
+def test_mix_rejects_bare_source_refs(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_service", lambda: object())
+    assert cli.main(["mix", "d" * 22, "--into", "spotify:playlist:" + "p" * 22]) == 1
+    assert "explicit type" in capsys.readouterr().err
 
 
 def test_delete_playlist_refusal_makes_no_call(monkeypatch, capsys):
