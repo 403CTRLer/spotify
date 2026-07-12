@@ -1,6 +1,11 @@
 # ADR 0002: Shuffle refuses playlists containing local/unavailable tracks
 
-Date: 2026-07-11 · Status: accepted · Trigger: review finding #1
+Date: 2026-07-11 · Status: **superseded by [ADR 0006](0006-scope-slimming-and-in-place-shuffle.md)** · Trigger: review finding #1
+
+> Shuffle was rewritten on an in-place reorder algorithm (ADR 0006), which
+> can never drop a track - local or otherwise - so the guard and the
+> snapshot/restore system this ADR describes no longer exist. Kept for
+> history; do not implement against this description.
 
 ## Context
 

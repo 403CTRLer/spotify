@@ -1,7 +1,10 @@
 # spotify-mcp
 
-Lightweight Spotify Web API foundation: a typed service layer, a developer CLI,
-and an MCP server exposing 10 provider-agnostic music tools.
+A reusable Spotify connector: an MCP server and a CLI over the Spotify Web
+API. Exposes Spotify capabilities only - no AI, recommendation, curation, or
+application-specific logic - so any MCP-compatible client (Claude, Cursor,
+VS Code/Cline/Roo, OpenHands, ...) or shell script can drive Spotify through
+the same service layer.
 
 The original script-based project lives on the [`legacy`](../../tree/legacy) branch.
 
@@ -29,76 +32,57 @@ Tokens are cached in `~/.spotify-mcp/tokens.json` and refreshed automatically.
 uv run spotify-mcp serve   # stdio transport
 ```
 
-Client config:
+Connecting Claude Desktop/Code, Cursor, VS Code, Cline, Roo Code, OpenHands,
+or any other stdio MCP client: [docs/clients.md](docs/clients.md).
 
-```json
-{
-  "mcpServers": {
-    "spotify": { "command": "uv", "args": ["run", "spotify-mcp", "serve"], "cwd": "<this repo>" }
-  }
-}
-```
-
-24 intent-named, provider-agnostic tools covering reads (`user_profile`,
-`playback_state`, `playlists`, `playlist_items`, `library_tracks`,
-`recent_history`, `top_items`, `search`, `lookup`, `currently_playing`),
-playback control (`play`, `pause`, `skip_next`, `skip_previous`, `queue_add`,
-`set_volume` - Spotify Premium required), library writes (`save_to_library`,
-`remove_from_library`), and playlist management (`create_playlist`,
-`add_to_playlist`, `remove_from_playlist`, `update_playlist`, plus
-confirm-gated `delete_playlist` and `shuffle_playlist`). Destructive tools
-use a two-step confirm protocol: the first call returns a preview and makes
-no changes. Full schemas and error behavior:
-[docs/tool-reference.md](docs/tool-reference.md).
-References may be Spotify URLs, `spotify:` URIs, or bare IDs.
+Tools cover **Authentication** (handled outside MCP via `spotify-mcp auth`),
+**User Profile**, **Search**, **Library** (saved tracks, top items, recent
+history), **Playlists** (read/create/update/delete/add/remove/shuffle), and
+**Playback** (state, play/pause/skip/queue/volume - Spotify Premium
+required). Destructive tools use a two-step confirm protocol: the first call
+returns a preview and makes no changes. Every tool's read-only/destructive/
+idempotent behavior and required OAuth scope come from one place,
+[`tools/capabilities.py`](src/spotify_mcp/tools/capabilities.py). Full
+schemas: [docs/tool-reference.md](docs/tool-reference.md).
 
 ## CLI
 
-26 subcommands; `--json` gives machine-readable output on reads. Highlights:
+`--json` gives machine-readable output on reads. By capability:
 
 ```sh
-uv run spotify-mcp now                     # playback state + devices
-uv run spotify-mcp play spotify:album:...  # play/pause/next/prev/queue/volume
-uv run spotify-mcp top tracks --range short
+# Search & lookup
 uv run spotify-mcp search "bicep glue" --type album
 uv run spotify-mcp lookup <any spotify link>
+
+# Library
 uv run spotify-mcp like TRACK... / unlike TRACK...
-uv run spotify-mcp playlists / tracks PLAYLIST / recent
+uv run spotify-mcp recent / top tracks --range short
+
+# Playlists
+uv run spotify-mcp playlists / tracks PLAYLIST
 uv run spotify-mcp create-playlist NAME / update-playlist / delete-playlist
 uv run spotify-mcp mix SOURCE... --into TARGET   # additive: never removes
-uv run spotify-mcp shuffle PLAYLIST [--force]
-uv run spotify-mcp shuffle-all --ignore "chill,..."
-uv run spotify-mcp restore SNAPSHOT.json [--force]
+uv run spotify-mcp shuffle PLAYLIST              # in-place reorder: lossless
 uv run spotify-mcp liked-to-playlist TARGET
-uv run spotify-mcp clear-liked             # destructive; asks for confirmation
+uv run spotify-mcp clear-liked                   # destructive; asks for confirmation
+
+# Playback (Spotify Premium)
+uv run spotify-mcp now
+uv run spotify-mcp play <link> / pause / next / prev / queue TRACK / volume N
 ```
 
 Full walkthroughs: [docs/user-guide.md](docs/user-guide.md).
-
-Safety model for destructive operations:
-
-- `shuffle` writes a full-track-list snapshot to `~/.spotify-mcp/recovery/`
-  **before** touching the playlist and deletes it on success; a failed run
-  names the snapshot, and `restore` applies it.
-- Playlists containing **local/unavailable tracks** refuse to shuffle (a
-  rewrite would drop them permanently); `--force` overrides, recording the
-  dropped entries in the snapshot. `shuffle-all` skips such playlists.
-- `mix` is additive-only: it never removes tracks, so there is no
-  partial-failure data-loss window.
-
-Details and failure modes: [docs/recovery.md](docs/recovery.md) ·
-Command walkthroughs: [docs/user-guide.md](docs/user-guide.md)
 
 ## Documentation
 
 | Doc | Contents |
 |---|---|
-| [docs/user-guide.md](docs/user-guide.md) | CLI reference: every command with examples, exit codes |
-| [docs/tool-reference.md](docs/tool-reference.md) | all 24 MCP tools: schemas, shapes, confirm protocol, errors |
+| [docs/user-guide.md](docs/user-guide.md) | CLI reference by capability, with examples |
+| [docs/tool-reference.md](docs/tool-reference.md) | MCP tools by capability: schemas, confirm protocol, errors |
 | [docs/api-coverage.md](docs/api-coverage.md) | full Spotify Web API coverage matrix with omission rationale |
+| [docs/clients.md](docs/clients.md) | connecting Claude, Cursor, VS Code, OpenHands, and others |
 | [docs/architecture.md](docs/architecture.md) | module boundaries, request flow |
 | [docs/oauth.md](docs/oauth.md) | PKCE flow, token lifecycle, scopes, app registration |
-| [docs/recovery.md](docs/recovery.md) | snapshots, restore, failure modes |
 | [docs/security.md](docs/security.md) | trust model, token storage, limitations |
 | [docs/development.md](docs/development.md) | structure, CI, releases |
 | [docs/testing.md](docs/testing.md) | test strategy, per-layer seams, conventions |
@@ -113,23 +97,22 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 ```
 
 CI runs the same gate (with `uv sync --frozen`) plus a gitleaks secret scan on
-every push/PR to `main`. Branch workflow: branch from `main`, PR back into
-`main`; `legacy` is frozen. Releases follow SemVer with notes in
-[CHANGELOG.md](CHANGELOG.md).
+every push/PR to `main`. Contribution guidelines: [CONTRIBUTING.md](CONTRIBUTING.md).
+Releases follow SemVer with notes in [CHANGELOG.md](CHANGELOG.md).
 
 ## Architecture (short version)
 
 ```
-cli/  mcp/ -> tools/ -> services/ -> repository/ (Protocol) -> client/ -> auth/
+cli/  mcp/ -> tools/ -> services/ -> repository/ (Protocol, atomic ops only) -> api/ -> auth/
                           models/, utils/, exceptions/, config/ are leaves
 ```
 
-Key decisions (full rationale in [docs/architecture.md](docs/architecture.md)
-and the ADRs): PKCE with no client secret; sync httpx; snapshot-before-replace
-shuffle with a local-tracks guard; additive mix; typed repository envelopes
-(`Page[T]`); home-dir state; 8 OAuth scopes; pydantic for Playlist/Track/User
-only; reserved extension namespaces (`analytics/`, `recommendations/`,
-`cache/`, `sync/`, `history/`) created only when they gain a consumer.
+Services are transport-agnostic (explicit ids only; reference parsing lives
+at the CLI/MCP boundary), the repository exposes atomic Spotify API
+operations only (no workflow logic), and a single capability registry
+(`tools/capabilities.py`) drives MCP annotations, the OAuth scope list, and
+documentation. Full rationale in [docs/architecture.md](docs/architecture.md)
+and the ADRs.
 
 ### Note on history
 

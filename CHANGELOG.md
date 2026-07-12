@@ -7,6 +7,68 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-12
+
+Reusability and clean-architecture pass: this repository is now explicitly
+scoped as a generic, open-source Spotify connector - no AI, recommendation,
+curation, or business logic - suitable for any MCP client.
+
+### Action required
+
+- **Re-run `spotify-mcp auth`**: requested scopes changed (10 total; see
+  below). The cached token is rejected with an actionable message.
+
+### Changed (breaking)
+
+- **Shuffle is now an in-place, lossless reorder** instead of a remove/re-add
+  rewrite: no track - including local files - can ever be lost, so the
+  entire snapshot/recovery/restore system, the local-track guard, and
+  `shuffle-all` are removed as unnecessary. Costs ~one API call per track.
+  (ADR 0006, supersedes ADR 0002)
+- **`currently_playing` tool removed** - a strict subset of `playback_state`.
+  Scope `user-read-currently-playing` dropped.
+- **Services take explicit identifiers only** (`playlist_id`, `track_ids`,
+  `(kind, id)` pairs), never URLs/URIs. Reference parsing now happens
+  exclusively at the CLI and MCP boundaries. `SpotifyRepository.replace_items`
+  and `.album_track_uris` are removed (no callers); `all_playlist_uris`
+  returns a plain list again.
+- **`mix` sources are playlists and tracks only** (album sources removed).
+- Package `client/` renamed to `api/` (`spotify_mcp.api.client`).
+- Scopes: 11 -> 10 (drop `user-read-currently-playing`).
+
+### Added
+
+- **Capability registry** (`tools/capabilities.py`): single source of truth
+  for read-only/destructive/idempotent/confirmation-required status and
+  required OAuth scopes, per tool. Drives MCP `ToolAnnotations`, an automated
+  scope-drift test, and the documentation tables. (ADR 0007)
+- MCP server **instructions** (auth prerequisite, reference rules, confirm
+  protocol) surfaced to clients via `FastMCP(instructions=...)`.
+- `docs/clients.md`: setup for Claude Desktop/Code, Cursor, VS Code (Cline,
+  Roo Code), OpenHands, and any generic stdio MCP client.
+- Open-source packaging metadata: SPDX license, classifiers, keywords,
+  project URLs.
+- `# TODO` marking future similarity-based shuffle ordering as an explicit
+  non-goal for this release (pure random is complete).
+
+### Removed
+
+- `spotify-mcp shuffle-all` and `spotify-mcp restore` CLI commands, and the
+  `--force` flags on shuffle/restore (no longer meaningful - nothing can be
+  lost).
+- `docs/recovery.md` (folded into the user guide's Playlists section and
+  ADR 0006).
+
+### Documentation
+
+- Tool reference and user guide reorganized by capability (Authentication,
+  User Profile, Search, Library, Playlists, Playback) instead of a tool/
+  command inventory, so they don't need updating on every tool addition.
+- Architecture guide rewritten for the atomic-repository / explicit-id-
+  service / capability-registry boundaries.
+- ADR 0006 (in-place shuffle, workflow slimming, explicit-id services),
+  ADR 0007 (capability registry).
+
 ## [0.3.0] - 2026-07-12
 
 Production-readiness release: playback support, full API audit, destructive

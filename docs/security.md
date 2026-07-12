@@ -12,10 +12,13 @@
   registered redirect path carrying `code`/`error` parameters (everything else
   gets a 404 and the wait continues), validates the OAuth `state` value, and
   times out after 300s.
-- Scopes are trimmed to the 11 the tools actually use (playlist read/modify,
-  library read/modify, currently-playing, recently-played, playback
-  read/modify, top items). No follow, no email/profile, no image-upload
-  scopes. Full mapping: [oauth.md](oauth.md) and
+- Scopes are trimmed to the 10 the tools actually use (playlist read/modify,
+  library read/modify, recently-played, playback read/modify, top items). No
+  follow, no email/profile, no image-upload scopes. Every scope is declared
+  against the tool that needs it in
+  [`tools/capabilities.py`](../src/spotify_mcp/tools/capabilities.py) - the
+  single source of truth, checked by an automated test against the requested
+  scope list. Full mapping: [oauth.md](oauth.md) and
   [api-coverage.md](api-coverage.md).
 
 ## Token storage

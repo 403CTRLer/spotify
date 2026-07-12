@@ -48,9 +48,10 @@ this app class (cannot be implemented).
 | Get Playlist | ✅ `lookup` / internals | playlist-read-private |
 | Change Playlist Details | ✅ `update_playlist` / `update-playlist` | playlist-modify-* |
 | Get Playlist Items | ✅ `playlist_items` / `tracks` | playlist-read-private |
-| Add Items | ✅ `add_to_playlist` (chunked 100) | playlist-modify-* |
+| Add Items | ✅ `add_to_playlist` (chunked 100/request per the documented limit) | playlist-modify-* |
 | Remove Items | ✅ `remove_from_playlist` | playlist-modify-* |
-| Update (reorder/replace) Items | ✅ replace-PUT used by shuffle/restore | playlist-modify-* |
+| Update Items (reorder) | ✅ atomic single-item reorder, driving `shuffle_playlist` (Fisher-Yates in the service layer, ~N calls) | playlist-modify-* |
+| Update Items (replace) | ➖ | not needed once shuffle is reorder-based; would only serve a future bulk-replace tool |
 | Get Current User's Playlists | ✅ `playlists` | playlist-read-private |
 | Get User's Playlists (other users) | ➖ | me-focused tool; no use case |
 | Create Playlist | ✅ `create_playlist` | playlist-modify-* |
@@ -65,7 +66,7 @@ this app class (cannot be implemented).
 |---|---|---|
 | Get Playback State | ✅ `playback_state` / `now` | user-read-playback-state |
 | Get Available Devices | ✅ (bundled into `playback_state`) | user-read-playback-state |
-| Get Currently Playing Track | ✅ `currently_playing` | user-read-currently-playing |
+| Get Currently Playing Track | ➖ | strict subset of Get Playback State; one fewer tool for the same information |
 | Start/Resume Playback | ✅ `play` | user-modify-playback-state |
 | Pause Playback | ✅ `pause` | user-modify-playback-state |
 | Skip Next / Previous | ✅ `skip_next`/`skip_previous`, `next`/`prev` | user-modify-playback-state |
@@ -97,13 +98,19 @@ that changes.
 All ➖ — browse metadata with no consumer; genre seeds were part of the
 restricted recommendations feature anyway.
 
-## Scopes requested (11)
+## Scopes requested (10)
 
 `playlist-read-private`, `playlist-read-collaborative`,
 `playlist-modify-public`, `playlist-modify-private`, `user-library-read`,
-`user-library-modify`, `user-read-currently-playing`,
-`user-read-recently-played`, `user-read-playback-state`,
-`user-modify-playback-state`, `user-top-read`.
+`user-library-modify`, `user-read-recently-played`,
+`user-read-playback-state`, `user-modify-playback-state`, `user-top-read`.
+
+Each scope is also declared per-tool in
+[`tools/capabilities.py`](../src/spotify_mcp/tools/capabilities.py), the
+single source of truth; a test asserts this table and that module never
+drift apart.
 
 Deliberately **not** requested: `user-read-email`, `user-read-private`,
-`ugc-image-upload`, `user-follow-*`, `streaming`, `app-remote-control`.
+`user-read-currently-playing` (its one consumer was removed as a strict
+subset of `playback_state`), `ugc-image-upload`, `user-follow-*`,
+`streaming`, `app-remote-control`.

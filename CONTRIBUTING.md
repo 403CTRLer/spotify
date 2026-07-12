@@ -20,8 +20,17 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 
 - No secrets in the repo - configuration comes from `.env` (gitignored);
   pre-commit and CI run gitleaks.
-- Business logic goes in `services/` against the `SpotifyRepository` protocol;
-  only `cli/` may print or prompt.
+- This repository is a Spotify connector only: no AI, recommendation,
+  curation, analytics, or application-specific business logic.
+- `repository/` methods are atomic Spotify API operations only - no
+  sequencing or algorithms. `services/` owns all business logic and
+  workflows, and takes explicit identifiers only (never a URL/URI - parsing
+  happens exclusively at the `cli/`/`tools/` boundary). Only `cli/` may print
+  or prompt. See [docs/architecture.md](docs/architecture.md).
+- New MCP tools need an entry in
+  [`tools/capabilities.py`](src/spotify_mcp/tools/capabilities.py) (read_only,
+  destructive, idempotent, confirmation_required, scopes) - a test enforces
+  this.
 - Keep it minimal: prefer the standard library, avoid new dependencies, and
   don't add abstractions without a second consumer.
 

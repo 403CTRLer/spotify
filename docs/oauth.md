@@ -11,7 +11,7 @@ spotify-mcp auth
   │    derive code_challenge = BASE64URL(SHA256(verifier)), state token
   │ 2. open browser → accounts.spotify.com/authorize
   │       ?client_id&response_type=code&redirect_uri&state
-  │       &scope=<11 scopes>&code_challenge_method=S256&code_challenge
+  │       &scope=<10 scopes>&code_challenge_method=S256&code_challenge
   │ 3. loopback http.server on 127.0.0.1:8888 waits (300s max) for
   │    GET /callback?code&state   ← only this exact path with code/error
   │    params is accepted; state mismatch aborts
@@ -39,14 +39,16 @@ cannot pop a browser reliably, and stdout is the protocol channel. It raises
   warning - a rare double refresh beats a deadlock.
 - If the refresh response omits a new refresh token, the previous one is kept.
 - A cached token missing any currently-required scope triggers an actionable
-  "run spotify-mcp auth" error - this is how scope additions (e.g. the 0.3.0
-  playback scopes) force a clean re-consent instead of mysterious 403s.
+  "run spotify-mcp auth" error - this is how scope changes (additions or, as
+  in 0.4.0, a removal) force a clean re-consent instead of mysterious 403s.
 
 ## Scopes
 
-See the table in [api-coverage.md](api-coverage.md#scopes-requested-11) - 11
-scopes, each mapped to the endpoints that need it. Profile/email, follow,
-image-upload, and streaming scopes are deliberately not requested.
+See the table in [api-coverage.md](api-coverage.md#scopes-requested-10) - 10
+scopes, each declared against the tool that needs it in
+[`tools/capabilities.py`](../src/spotify_mcp/tools/capabilities.py) (the
+single source of truth) and checked by an automated test. Profile/email,
+follow, image-upload, and streaming scopes are deliberately not requested.
 
 ## App registration requirements
 

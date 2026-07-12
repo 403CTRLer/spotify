@@ -20,12 +20,13 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 |---|---|---|
 | `utils/links`, `config` | pure functions | table-driven parametrize |
 | `auth` | `_token_request`, `_await_callback` monkeypatched | PKCE challenge pinned to the RFC 7636 Appendix B vector; cache via `tmp_path`; concurrency via real threads + events |
-| `client` | `httpx.MockTransport` | one test per status path (401 refresh, 429 backoff/fail-fast, 404, 204, transport errors), pagination |
-| `repository` | `httpx.MockTransport` | request shapes (method/path/params/body), chunk sizes, payload trimming, null filtering |
-| `services` | in-memory `FakeRepo` | business rules: snapshot ordering, guards, ref parsing, counts. pyright enforces that FakeRepo structurally satisfies `SpotifyRepository` - protocol drift fails the typecheck, not just tests |
-| `tools` | stub service via `monkeypatch` | branch logic only: confirm protocol, idle-player message, kind validation, model dumping |
-| `cli` | stub `_service` + `capsys` | flag wiring, --json output, confirmation refusals, exit codes |
-| `mcp` | `build_server()` | all 24 schemas derive; every tool has a description |
+| `api` | `httpx.MockTransport` | one test per status path (401 refresh, 429 backoff/fail-fast, 404, 204, transport errors), pagination |
+| `repository` | `httpx.MockTransport` | request shapes (method/path/params/body), chunk sizes, payload trimming, null filtering; reorder body/snapshot_id threading |
+| `services` | in-memory `FakeRepo` | business rules and workflows: shuffle permutation correctness (including a planted local-track URI), optimistic-concurrency snapshot_id threading, mix additivity, kind validation, counts. pyright enforces that FakeRepo structurally satisfies `SpotifyRepository` - protocol drift fails the typecheck, not just tests. Services are called with explicit ids only - no reference parsing here |
+| `tools` | stub service via `monkeypatch` | branch logic and the reference-resolution boundary: confirm protocol, kind validation, model dumping, that refs are normalized to ids before reaching the service |
+| `cli` | stub `_service` + `capsys` | flag wiring, --json output, confirmation refusals, exit codes, boundary normalization (bare id -> track in `play`, rejection in `mix`) |
+| `mcp` | `build_server()` | the registered tool set and their `ToolAnnotations` match `tools/capabilities.py` exactly; server instructions are present |
+| `tools/capabilities.py` | direct assertions | registry <-> tool list is 1:1; requested OAuth scopes equal the union of declared scopes (fails on drift); confirmation_required tools (and only those) accept a `confirm` parameter |
 
 ## Conventions
 
