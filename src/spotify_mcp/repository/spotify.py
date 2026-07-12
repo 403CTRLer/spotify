@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from typing import Any, Protocol
 
-from spotify_mcp.client.api_client import SpotifyApiClient
+from spotify_mcp.api.client import SpotifyApiClient
 from spotify_mcp.models.schemas import Page, PlayedItem, Playlist, Track, User
 
 PLAYLIST_CHUNK = 100  # Spotify limit for playlist item writes

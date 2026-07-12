@@ -3,7 +3,7 @@ import json
 import httpx
 import pytest
 
-from spotify_mcp.client.api_client import BASE_URL, SpotifyApiClient
+from spotify_mcp.api.client import BASE_URL, SpotifyApiClient
 from spotify_mcp.exceptions.errors import ApiError, AuthError, NotFoundError, RateLimitError
 
 
@@ -90,7 +90,7 @@ def test_persistent_429_raises_rate_limit_error():
 def test_huge_retry_after_fails_fast_without_sleeping(monkeypatch):
     # review #5: capping the sleep and retrying anyway guaranteed another 429;
     # a wait beyond the cap must fail immediately with the value attached
-    import spotify_mcp.client.api_client as client_module
+    import spotify_mcp.api.client as client_module
 
     def no_sleep(seconds):
         raise AssertionError("must not sleep for an out-of-cap Retry-After")
@@ -110,7 +110,7 @@ def test_huge_retry_after_fails_fast_without_sleeping(monkeypatch):
 
 
 def test_non_numeric_retry_after_retries_conservatively(monkeypatch):
-    import spotify_mcp.client.api_client as client_module
+    import spotify_mcp.api.client as client_module
 
     sleeps = []
     monkeypatch.setattr(client_module.time, "sleep", sleeps.append)

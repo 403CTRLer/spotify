@@ -2,7 +2,7 @@ import json
 
 import httpx
 
-from spotify_mcp.client.api_client import BASE_URL, SpotifyApiClient
+from spotify_mcp.api.client import BASE_URL, SpotifyApiClient
 from spotify_mcp.models.schemas import Playlist, Track
 from spotify_mcp.repository.spotify import SpotifyApiRepository
 

@@ -8,8 +8,8 @@ import argparse
 import json
 import sys
 
+from spotify_mcp.api.client import SpotifyApiClient
 from spotify_mcp.auth.oauth import SpotifyAuth
-from spotify_mcp.client.api_client import SpotifyApiClient
 from spotify_mcp.config.settings import Settings
 from spotify_mcp.exceptions.errors import SpotifyMcpError
 from spotify_mcp.repository.spotify import SpotifyApiRepository
