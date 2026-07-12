@@ -69,12 +69,6 @@ class Playlist(BaseModel):
         )
 
 
-class NowPlaying(TypedDict):
-    is_playing: bool
-    progress_ms: int | None
-    track: Track
-
-
 class PlayedItem(TypedDict):
     played_at: str | None
     track: Track

@@ -41,11 +41,28 @@ def test_add_items_chunks_of_100():
     assert all(method == "POST" and path == "/v1/playlists/pl/tracks" for method, path, _ in calls)
 
 
-def test_replace_items_puts_head_then_posts_rest():
-    repo, calls = recording_repo(lambda request: httpx.Response(200, json={"snapshot_id": "s"}))
-    uris = [f"spotify:track:{i:022d}" for i in range(150)]
-    repo.replace_items("pl", uris)
-    assert [(m, len(b["uris"])) for m, _, b in calls] == [("PUT", 100), ("POST", 50)]
+def test_reorder_playlist_sends_range_body_and_returns_new_snapshot():
+    repo, calls = recording_repo(lambda request: httpx.Response(200, json={"snapshot_id": "s2"}))
+    assert repo.reorder_playlist("pl", 7, 2, "s1") == "s2"
+    assert calls == [
+        (
+            "PUT",
+            "/v1/playlists/pl/tracks",
+            {"range_start": 7, "insert_before": 2, "range_length": 1, "snapshot_id": "s1"},
+        )
+    ]
+
+
+def test_playlist_snapshot_id_requests_only_that_field():
+    seen = {}
+
+    def handler(request):
+        seen.update(dict(request.url.params))
+        return httpx.Response(200, json={"snapshot_id": "s9"})
+
+    repo = make_repo(handler)
+    assert repo.playlist_snapshot_id("pl") == "s9"
+    assert seen == {"fields": "snapshot_id"}
 
 
 def test_remove_saved_chunks_of_50():
@@ -68,37 +85,11 @@ def test_all_playlist_uris_skips_null_and_local_tracks():
         return httpx.Response(200, json={"items": items, "next": None})
 
     repo = make_repo(handler)
-    uris, skipped = repo.all_playlist_uris("pl")
-    assert uris == [
+    # additive callers get only re-addable URIs; local/null entries are excluded
+    assert repo.all_playlist_uris("pl") == [
         "spotify:track:" + "a" * 22,
         "spotify:track:" + "b" * 22,
     ]
-    # review #1: the skipped local/unavailable entries are surfaced, not silently dropped
-    assert skipped == [
-        "unavailable track (removed from catalog)",
-        "unavailable track (removed from catalog)",
-        "spotify:local:x",
-    ]
-
-
-def test_currently_playing_none_on_204():
-    repo = make_repo(lambda request: httpx.Response(204))
-    assert repo.currently_playing() is None
-
-
-def test_currently_playing_returns_track_model():
-    # review #7: envelopes carry live models until the tool boundary
-    payload = {
-        "is_playing": True,
-        "progress_ms": 1234,
-        "item": {"id": "x" * 22, "name": "Song", "uri": "spotify:track:" + "x" * 22},
-    }
-    repo = make_repo(lambda request: httpx.Response(200, json=payload))
-    now = repo.currently_playing()
-    assert now is not None
-    assert now["is_playing"] is True
-    assert isinstance(now["track"], Track)
-    assert now["track"].name == "Song"
 
 
 def test_search_filters_null_items():

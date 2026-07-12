@@ -3,8 +3,8 @@ from typing import Any
 
 import pytest
 
-from spotify_mcp.exceptions.errors import ApiError, LocalTracksError
-from spotify_mcp.models.schemas import NowPlaying, Page, PlayedItem, Playlist, Track, User
+from spotify_mcp.exceptions.errors import ApiError
+from spotify_mcp.models.schemas import Page, PlayedItem, Playlist, Track, User
 from spotify_mcp.services.service import SpotifyService
 
 ME = "m" * 22
@@ -17,20 +17,34 @@ def uri(n: int) -> str:
     return f"spotify:track:{n:022d}"
 
 
+def pl_uri(playlist_id: str) -> str:
+    return f"spotify:playlist:{playlist_id}"
+
+
 class FakeRepo:
-    """In-memory SpotifyRepository recording every mutating call in order."""
+    """In-memory SpotifyRepository recording every mutating call in order.
+
+    reorder_playlist applies real list moves and enforces optimistic
+    concurrency: a stale snapshot_id raises, so the service only passes if it
+    threads the token correctly call-to-call.
+    """
 
     def __init__(self):
         self.playlists: dict[str, Playlist] = {}
         self.playlist_uris: dict[str, list[str]] = {}
-        self.playlist_skipped: dict[str, list[str]] = {}  # local/unavailable per playlist
         self.saved_ids: list[str] = []
         self.calls: list[tuple[str, Any]] = []
-        self.on_replace = None  # optional hook: (playlist_id, uris) -> None
+        self.reorder_count = 0
+        self.reorder_fail_at: int | None = None  # raise on the Nth reorder call
+        self._snapshots: dict[str, str] = {}
 
     def add_playlist(self, playlist_id: str, name: str, owner_id: str = ME, uris=()):
         self.playlists[playlist_id] = Playlist(
-            id=playlist_id, uri=f"spotify:playlist:{playlist_id}", name=name, owner_id=owner_id
+            id=playlist_id,
+            uri=pl_uri(playlist_id),
+            name=name,
+            owner_id=owner_id,
+            total_tracks=len(uris),
         )
         self.playlist_uris[playlist_id] = list(uris)
 
@@ -38,9 +52,6 @@ class FakeRepo:
 
     def me(self) -> User:
         return User(id=ME, display_name="Tester")
-
-    def currently_playing(self) -> NowPlaying | None:
-        return None
 
     def my_playlists(self, limit: int = 50, offset: int = 0) -> Page[Playlist]:
         items = list(self.playlists.values())[offset : offset + limit]
@@ -52,16 +63,15 @@ class FakeRepo:
     def get_playlist(self, playlist_id: str) -> Playlist:
         return self.playlists[playlist_id]
 
+    def playlist_snapshot_id(self, playlist_id: str) -> str:
+        self.calls.append(("snapshot_id", playlist_id))
+        return self._snapshots.setdefault(playlist_id, "snap-0")
+
     def playlist_items(self, playlist_id: str, limit: int = 100, offset: int = 0) -> Page[Track]:
         return {"total": len(self.playlist_uris[playlist_id]), "offset": offset, "items": []}
 
-    def all_playlist_uris(self, playlist_id: str) -> tuple[list[str], list[str]]:
-        return list(self.playlist_uris[playlist_id]), list(
-            self.playlist_skipped.get(playlist_id, [])
-        )
-
-    def album_track_uris(self, album_id: str) -> list[str]:
-        return []
+    def all_playlist_uris(self, playlist_id: str) -> list[str]:
+        return [u for u in self.playlist_uris[playlist_id] if not u.startswith("spotify:local:")]
 
     def search(self, query: str, types: Sequence[str], limit: int = 10) -> dict[str, Any]:
         return {}
@@ -71,8 +81,7 @@ class FakeRepo:
 
     def add_items(self, playlist_id: str, uris: Sequence[str]) -> int:
         self.calls.append(("add", playlist_id))
-        existing = self.playlist_uris.setdefault(playlist_id, [])
-        existing.extend(uris)
+        self.playlist_uris.setdefault(playlist_id, []).extend(uris)
         return len(uris)
 
     def remove_items(self, playlist_id: str, uris: Sequence[str]) -> int:
@@ -82,17 +91,31 @@ class FakeRepo:
         existing[:] = [u for u in existing if u not in doomed]
         return len(uris)
 
-    def replace_items(self, playlist_id: str, uris: Sequence[str]) -> None:
-        self.calls.append(("replace", playlist_id))
-        if self.on_replace:
-            self.on_replace(playlist_id, uris)
-        self.playlist_uris[playlist_id] = list(uris)
+    def reorder_playlist(
+        self, playlist_id: str, range_start: int, insert_before: int, snapshot_id: str
+    ) -> str:
+        if snapshot_id != self._snapshots.get(playlist_id, "snap-0"):
+            raise ApiError("stale snapshot_id", status=400)
+        if self.reorder_fail_at is not None and self.reorder_count >= self.reorder_fail_at:
+            raise ApiError("boom mid-shuffle", status=500)
+        items = self.playlist_uris[playlist_id]
+        items.insert(insert_before, items.pop(range_start))
+        self.reorder_count += 1
+        self.calls.append(("reorder", (range_start, insert_before)))
+        new_snapshot = f"snap-{self.reorder_count}"
+        self._snapshots[playlist_id] = new_snapshot
+        return new_snapshot
 
     def saved_tracks(self, limit: int = 50, offset: int = 0) -> Page[Track]:
         return {"total": len(self.saved_ids), "offset": offset, "items": []}
 
     def all_saved_ids(self) -> list[str]:
         return list(self.saved_ids)
+
+    def save_tracks(self, track_ids: Sequence[str]) -> int:
+        self.calls.append(("save_tracks", list(track_ids)))
+        self.saved_ids.extend(track_ids)
+        return len(track_ids)
 
     def remove_saved(self, track_ids: Sequence[str]) -> int:
         self.calls.append(("remove_saved", len(track_ids)))
@@ -144,11 +167,6 @@ class FakeRepo:
         self.calls.append(("top_artists", time_range))
         return {"total": 0, "offset": offset, "items": []}
 
-    def save_tracks(self, track_ids: Sequence[str]) -> int:
-        self.calls.append(("save_tracks", list(track_ids)))
-        self.saved_ids.extend(track_ids)
-        return len(track_ids)
-
     def get_track(self, track_id: str) -> Track:
         return Track(id=track_id, uri=f"spotify:track:{track_id}", name="T")
 
@@ -172,145 +190,71 @@ def repo():
 
 
 @pytest.fixture
-def service(repo, tmp_path):
-    return SpotifyService(repo, recovery_dir=tmp_path / "recovery")
+def service(repo):
+    return SpotifyService(repo)
 
 
-# -- shuffle: snapshot-before-mutation (legacy bug 4) --------------------------
+# -- shuffle: lossless in-place reorder ------------------------------------------
 
 
-def test_shuffle_snapshot_exists_before_mutation(service, repo, tmp_path):
-    repo.add_playlist(PL_A, "Mix", uris=[uri(i) for i in range(5)])
-    seen = {}
-
-    def on_replace(playlist_id, uris):
-        snapshots = list((tmp_path / "recovery").glob("*.json"))
-        seen["snapshots_at_mutation"] = len(snapshots)
-
-    repo.on_replace = on_replace
-    assert service.shuffle_playlist(PL_A) == 5
-    assert seen["snapshots_at_mutation"] == 1  # snapshot written BEFORE replace ran
-
-
-def test_shuffle_success_removes_snapshot_and_keeps_tracks(service, repo, tmp_path):
-    original = [uri(i) for i in range(150)]
+def test_shuffle_keeps_every_item_including_local_tracks(service, repo):
+    original = [uri(i) for i in range(10)]
+    original.insert(3, "spotify:local:me:album:song:180")  # the headline regression
     repo.add_playlist(PL_A, "Mix", uris=original)
+    assert service.shuffle_playlist(PL_A) == 11
+    assert sorted(repo.playlist_uris[PL_A]) == sorted(original)
+    assert repo.reorder_count <= 10  # at most n-1 moves
+
+
+def test_shuffle_is_deterministic_under_forced_choices(service, repo, monkeypatch):
+    # randint always picking the last index turns Fisher-Yates into a reversal
+    import spotify_mcp.services.service as service_module
+
+    original = [uri(1), uri(2), uri(3)]
+    repo.add_playlist(PL_A, "Mix", uris=original)
+    monkeypatch.setattr(service_module.random, "randint", lambda a, b: b)
     service.shuffle_playlist(PL_A)
-    assert sorted(repo.playlist_uris[PL_A]) == sorted(original)  # same tracks, new order
-    assert list((tmp_path / "recovery").glob("*.json")) == []
+    assert repo.playlist_uris[PL_A] == list(reversed(original))
 
 
-def test_shuffle_failure_keeps_snapshot_with_full_list(service, repo, tmp_path):
-    original = [uri(i) for i in range(7)]
+def test_shuffle_threads_snapshot_id_between_calls(service, repo, monkeypatch):
+    # FakeRepo raises on any stale snapshot_id, so success proves threading
+    import spotify_mcp.services.service as service_module
+
+    repo.add_playlist(PL_A, "Mix", uris=[uri(i) for i in range(6)])
+    monkeypatch.setattr(service_module.random, "randint", lambda a, b: b)
+    service.shuffle_playlist(PL_A)
+    assert repo.reorder_count == 5
+
+
+def test_shuffle_mid_run_failure_loses_nothing(service, repo, monkeypatch):
+    import spotify_mcp.services.service as service_module
+
+    original = [uri(i) for i in range(8)]
     repo.add_playlist(PL_A, "Mix", uris=original)
-
-    def on_replace(playlist_id, uris):
-        raise ApiError("boom", status=500)
-
-    repo.on_replace = on_replace
-    with pytest.raises(ApiError, match="saved at") as exc_info:
+    monkeypatch.setattr(service_module.random, "randint", lambda a, b: b)
+    repo.reorder_fail_at = 3
+    with pytest.raises(ApiError, match="mid-shuffle"):
         service.shuffle_playlist(PL_A)
-
-    snapshots = list((tmp_path / "recovery").glob("*.json"))
-    assert len(snapshots) == 1
-    assert str(snapshots[0]) in str(exc_info.value)
-    import json
-
-    data = json.loads(snapshots[0].read_text())
-    assert sorted(data["uris"]) == sorted(original)  # FULL list, not just a failed chunk
+    assert sorted(repo.playlist_uris[PL_A]) == sorted(original)  # complete, just partial order
 
 
-def test_shuffle_empty_playlist_is_noop(service, repo):
+def test_shuffle_small_playlists_are_noops(service, repo):
     repo.add_playlist(PL_A, "Empty")
+    repo.add_playlist(PL_B, "Single", uris=[uri(1)])
     assert service.shuffle_playlist(PL_A) == 0
-    assert repo.calls == []
+    assert service.shuffle_playlist(PL_B) == 0
+    assert repo.calls == []  # no snapshot fetch, no reorders
 
 
-# -- shuffle: local/unavailable track guard (review #1) -------------------------
-
-
-def test_shuffle_refuses_playlists_with_local_tracks(service, repo, tmp_path):
-    repo.add_playlist(PL_A, "Mix", uris=[uri(1)])
-    repo.playlist_skipped[PL_A] = ["spotify:local:me:album:song:180"]
-    with pytest.raises(LocalTracksError, match="1 local/unavailable"):
-        service.shuffle_playlist(PL_A)
-    assert repo.calls == []  # no mutation happened
-    assert not (tmp_path / "recovery").exists()  # and no stray snapshot
-
-
-def test_shuffle_force_shuffles_streamable_and_records_skipped(service, repo, tmp_path):
-    repo.add_playlist(PL_A, "Mix", uris=[uri(1), uri(2)])
-    repo.playlist_skipped[PL_A] = ["spotify:local:me:album:song:180"]
-    seen = {}
-
-    def on_replace(playlist_id, uris):
-        import json
-
-        snapshot = next(iter((tmp_path / "recovery").glob("*.json")))
-        seen["skipped"] = json.loads(snapshot.read_text())["skipped"]
-
-    repo.on_replace = on_replace
-    assert service.shuffle_playlist(PL_A, force=True) == 2
-    assert seen["skipped"] == ["spotify:local:me:album:song:180"]
-
-
-def test_shuffle_all_skips_playlists_with_local_tracks(service, repo):
-    repo.add_playlist(PL_A, "Clean", uris=[uri(1)])
-    repo.add_playlist(PL_B, "HasLocals", uris=[uri(2)])
-    repo.playlist_skipped[PL_B] = ["spotify:local:x"]
-    results = dict(service.shuffle_all_owned())
-    assert results["Clean"] == "shuffled"
-    assert results["HasLocals"].startswith("skipped")
-    assert repo.playlist_uris[PL_B] == [uri(2)]  # untouched
-
-
-# -- shuffle_all_owned: ignore-list logic (legacy bugs 1 + 2) -------------------
-
-
-def test_empty_ignore_list_ignores_nothing(service, repo):
-    repo.add_playlist(PL_A, "Alpha", uris=[uri(1)])
-    repo.add_playlist(PL_B, "Beta", uris=[uri(2)])
-    results = dict(service.shuffle_all_owned(ignore=[]))
-    assert results == {"Alpha": "shuffled", "Beta": "shuffled"}
-
-
-def test_blank_ignore_entries_are_dropped(service, repo):
-    # legacy bug: input().split(",") on empty input produced [""] and ignored everything
-    repo.add_playlist(PL_A, "Alpha", uris=[uri(1)])
-    results = dict(service.shuffle_all_owned(ignore=["", "  "]))
-    assert results == {"Alpha": "shuffled"}
-
-
-def test_ignore_by_playlist_url(service, repo):
-    repo.add_playlist(PL_A, "Alpha", uris=[uri(1)])
-    repo.add_playlist(PL_B, "Beta", uris=[uri(2)])
-    url = f"https://open.spotify.com/playlist/{PL_A}?si=x"
-    results = dict(service.shuffle_all_owned(ignore=[url]))
-    assert results == {"Alpha": "ignored", "Beta": "shuffled"}
-
-
-def test_ignore_by_partial_name_case_insensitive(service, repo):
-    repo.add_playlist(PL_A, "Chill Vibes", uris=[uri(1)])
-    repo.add_playlist(PL_B, "Workout", uris=[uri(2)])
-    results = dict(service.shuffle_all_owned(ignore=["chill"]))
-    assert results == {"Chill Vibes": "ignored", "Workout": "shuffled"}
-
-
-def test_non_owned_playlists_are_skipped(service, repo):
-    repo.add_playlist(PL_A, "Mine", uris=[uri(1)])
-    repo.add_playlist(PL_B, "Theirs", owner_id="someone-else", uris=[uri(2)])
-    results = dict(service.shuffle_all_owned())
-    assert results == {"Mine": "shuffled"}
-
-
-# -- mix: additive-only, no data-loss window (review #2) ------------------------
+# -- mix: additive-only, playlist/track URL+URI sources ----------------------------
 
 
 def test_mix_dedupes_and_reports_duplicates(service, repo):
     repo.add_playlist(PL_A, "Src1", uris=[uri(1), uri(2)])
     repo.add_playlist(PL_B, "Src2", uris=[uri(2), uri(3)])
     repo.add_playlist(PL_C, "Target")
-    added, dupes = service.mix_playlists([PL_A, PL_B], PL_C)
+    added, dupes = service.mix_playlists([pl_uri(PL_A), pl_uri(PL_B)], pl_uri(PL_C))
     assert (added, dupes) == (3, 1)
     assert sorted(repo.playlist_uris[PL_C]) == [uri(1), uri(2), uri(3)]
 
@@ -318,91 +262,25 @@ def test_mix_dedupes_and_reports_duplicates(service, repo):
 def test_mix_never_removes_from_target(service, repo):
     repo.add_playlist(PL_A, "Src", uris=[uri(1), uri(2)])
     repo.add_playlist(PL_C, "Target", uris=[uri(1)])
-    added, dupes = service.mix_playlists([PL_A], PL_C)
-    assert ("remove", PL_C) not in repo.calls  # additive only: no destructive step
-    assert repo.playlist_uris[PL_C] == [uri(1), uri(2)]  # existing copy stays in place
+    added, dupes = service.mix_playlists([pl_uri(PL_A)], pl_uri(PL_C))
+    assert ("remove", PL_C) not in repo.calls
+    assert repo.playlist_uris[PL_C] == [uri(1), uri(2)]
     assert (added, dupes) == (1, 1)
 
 
-def test_mix_with_nothing_new_is_a_noop_add(service, repo):
-    repo.add_playlist(PL_A, "Src", uris=[uri(1)])
-    repo.add_playlist(PL_C, "Target", uris=[uri(1)])
-    added, dupes = service.mix_playlists([PL_A], PL_C)
-    assert (added, dupes) == (0, 1)
-    assert repo.playlist_uris[PL_C] == [uri(1)]
+def test_mix_accepts_track_sources(service, repo):
+    repo.add_playlist(PL_C, "Target")
+    added, _ = service.mix_playlists([uri(7)], pl_uri(PL_C))
+    assert added == 1
+    assert repo.playlist_uris[PL_C] == [uri(7)]
 
 
-# -- restore (review #6) ---------------------------------------------------------
-
-
-def test_restore_replaces_playlist_and_deletes_snapshot(service, repo, tmp_path):
-    import json
-
-    repo.add_playlist(PL_A, "Broken", uris=[uri(1)])  # failure state: subset of snapshot
-    snapshot = tmp_path / "snap.json"
-    snapshot.write_text(
-        json.dumps(
-            {
-                "playlist_id": PL_A,
-                "name": "Broken",
-                "uris": [uri(1), uri(2)],
-                "skipped": ["spotify:local:x"],
-            }
-        )
-    )
-    name, count, skipped = service.restore_snapshot(snapshot)
-    assert (name, count) == ("Broken", 2)
-    assert skipped == ["spotify:local:x"]
-    assert repo.playlist_uris[PL_A] == [uri(1), uri(2)]
-    assert not snapshot.exists()  # consumed on success
-
-
-def test_restore_refuses_when_playlist_gained_tracks(service, repo, tmp_path):
-    # restore semantics: replace-restore must not silently discard edits made
-    # after the failure it is recovering from
-    import json
-
-    from spotify_mcp.exceptions.errors import RestoreConflictError
-
-    repo.add_playlist(PL_A, "Edited", uris=[uri(1), uri(9)])  # uri(9) added post-failure
-    snapshot = tmp_path / "snap.json"
-    snapshot.write_text(
-        json.dumps({"playlist_id": PL_A, "name": "Edited", "uris": [uri(1), uri(2)]})
-    )
-    with pytest.raises(RestoreConflictError, match="gained 1 track"):
-        service.restore_snapshot(snapshot)
-    assert repo.playlist_uris[PL_A] == [uri(1), uri(9)]  # untouched
-    assert snapshot.exists()  # kept for a --force retry
-
-    name, count, _ = service.restore_snapshot(snapshot, force=True)
-    assert (name, count) == ("Edited", 2)
-    assert repo.playlist_uris[PL_A] == [uri(1), uri(2)]
-
-
-def test_restore_proceeds_when_playlist_is_subset_of_snapshot(service, repo, tmp_path):
-    # a partially-written playlist (the normal failure state) restores without force
-    import json
-
-    repo.add_playlist(PL_A, "Partial", uris=[uri(1)])
-    snapshot = tmp_path / "snap.json"
-    snapshot.write_text(
-        json.dumps({"playlist_id": PL_A, "name": "Partial", "uris": [uri(1), uri(2)]})
-    )
-    _, count, _ = service.restore_snapshot(snapshot)
-    assert count == 2
-
-
-def test_restore_rejects_malformed_snapshots(service, tmp_path):
-    bad = tmp_path / "bad.json"
-    bad.write_text("not json")
-    with pytest.raises(ValueError, match="Cannot read"):
-        service.restore_snapshot(bad)
-
-    wrong_shape = tmp_path / "wrong.json"
-    wrong_shape.write_text('{"uris": "nope"}')
-    with pytest.raises(ValueError, match="not a spotify-mcp recovery snapshot"):
-        service.restore_snapshot(wrong_shape)
-    assert wrong_shape.exists()  # never deleted on failure
+def test_mix_rejects_bare_and_album_sources(service, repo):
+    repo.add_playlist(PL_C, "Target")
+    with pytest.raises(ValueError):  # bare IDs are ambiguous for mix sources
+        service.mix_playlists(["d" * 22], pl_uri(PL_C))
+    with pytest.raises(ValueError, match="playlists or tracks"):
+        service.mix_playlists([f"spotify:album:{'d' * 22}"], pl_uri(PL_C))
 
 
 # -- saved tracks ----------------------------------------------------------------
@@ -463,11 +341,6 @@ def test_play_without_ref_resumes(service, repo):
     assert repo.calls == [("play", (None, None, ()))]
 
 
-def test_bare_id_play_assumes_track(service, repo):
-    service.play("t" * 22)
-    assert repo.calls == [("play", (None, None, (f"spotify:track:{'t' * 22}",)))]
-
-
 def test_volume_validation(service, repo):
     with pytest.raises(ValueError, match="0-100"):
         service.set_volume(150)
@@ -499,7 +372,7 @@ def test_lookup_dispatches_by_ref_type(service, repo):
     assert service.lookup(f"spotify:album:{track}")["type"] == "album"
     assert service.lookup(f"spotify:artist:{track}")["type"] == "artist"
     repo.add_playlist(PL_A, "P")
-    assert service.lookup(f"spotify:playlist:{PL_A}")["type"] == "playlist"
+    assert service.lookup(pl_uri(PL_A))["type"] == "playlist"
     with pytest.raises(ValueError):  # bare IDs are ambiguous for lookup
         service.lookup(track)
 

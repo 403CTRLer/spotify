@@ -17,15 +17,6 @@ class StubService:
         return self.saved_total
 
 
-def test_ignore_default_does_not_leak_across_parses():
-    # review #10: argparse appends into a shared list default
-    parser = cli.build_parser()
-    first = parser.parse_args(["shuffle-all", "--ignore", "chill"])
-    second = parser.parse_args(["shuffle-all"])
-    assert first.ignore == ["chill"]
-    assert not second.ignore  # must not have accumulated "chill"
-
-
 def test_clear_liked_aborts_on_eof(monkeypatch, capsys):
     # review #15: piped/closed stdin must abort, not traceback
     stub = StubService()
@@ -59,23 +50,24 @@ def test_main_maps_domain_errors_to_exit_1(monkeypatch, capsys):
     assert "Not authenticated" in capsys.readouterr().err
 
 
-def test_shuffle_force_flag_wired_through(monkeypatch):
+def test_shuffle_wired_to_service(monkeypatch, capsys):
     seen = {}
 
     class ShuffleStub:
-        def shuffle_playlist(self, ref, force=False):
-            seen["force"] = force
-            return 1
+        def shuffle_playlist(self, ref):
+            seen["ref"] = ref
+            return 7
 
     monkeypatch.setattr(cli, "_service", lambda: ShuffleStub())
-    args = cli.build_parser().parse_args(["shuffle", "x" * 22, "--force"])
+    args = cli.build_parser().parse_args(["shuffle", "x" * 22])
     assert args.func(args) == 0
-    assert seen["force"] is True
+    assert seen["ref"] == "x" * 22
+    assert "7 tracks in place" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
     "argv",
-    [["mix", "--into", "t"], ["restore"], ["shuffle"], ["queue"], ["volume"], ["top"]],
+    [["mix", "--into", "t"], ["shuffle"], ["queue"], ["volume"], ["top"]],
 )
 def test_missing_required_args_exit_2(argv):
     with pytest.raises(SystemExit) as exc_info:

@@ -32,10 +32,6 @@ class Settings:
     def token_cache_path(self) -> Path:
         return self.state_dir / "tokens.json"
 
-    @property
-    def recovery_dir(self) -> Path:
-        return self.state_dir / "recovery"
-
     @classmethod
     def from_env(cls, dotenv_path: Path | None = None) -> "Settings":
         """Load settings from the environment, then ./.env, then ~/.spotify-mcp/.env.

@@ -20,7 +20,7 @@ from spotify_mcp.utils.logging import configure_logging
 def _service() -> SpotifyService:
     settings = Settings.from_env()
     repo = SpotifyApiRepository(SpotifyApiClient(SpotifyAuth(settings)))
-    return SpotifyService(repo, recovery_dir=settings.recovery_dir)
+    return SpotifyService(repo)
 
 
 def cmd_auth(args: argparse.Namespace) -> int:
@@ -213,23 +213,8 @@ def cmd_mix(args: argparse.Namespace) -> int:
 
 
 def cmd_shuffle(args: argparse.Namespace) -> int:
-    count = _service().shuffle_playlist(args.playlist, force=args.force)
-    print(f"Shuffled {count} tracks.")
-    return 0
-
-
-def cmd_shuffle_all(args: argparse.Namespace) -> int:
-    ignore = [term for chunk in args.ignore or [] for term in chunk.split(",")]
-    for name, status in _service().shuffle_all_owned(ignore):
-        print(f"{status:>8}: {name}")
-    return 0
-
-
-def cmd_restore(args: argparse.Namespace) -> int:
-    name, count, skipped = _service().restore_snapshot(args.snapshot, force=args.force)
-    print(f"Restored {count} tracks to {name!r}.")
-    if skipped:
-        print(f"Note: {len(skipped)} local/unavailable track(s) could not be restored via the API.")
+    count = _service().shuffle_playlist(args.playlist)
+    print(f"Shuffled {count} tracks in place.")
     return 0
 
 
@@ -279,23 +264,11 @@ def build_parser() -> argparse.ArgumentParser:
     mix.add_argument("--into", required=True, help="Target playlist (link, URI, or ID)")
     mix.set_defaults(func=cmd_mix)
 
-    shuffle = sub.add_parser("shuffle", help="Persistently shuffle a playlist")
+    shuffle = sub.add_parser(
+        "shuffle", help="Shuffle a playlist by reordering items in place (lossless)"
+    )
     shuffle.add_argument("playlist", help="Playlist link, URI, or ID")
-    shuffle.add_argument(
-        "--force",
-        action="store_true",
-        help="Shuffle even if local/unavailable tracks would be permanently dropped",
-    )
     shuffle.set_defaults(func=cmd_shuffle)
-
-    shuffle_all = sub.add_parser("shuffle-all", help="Shuffle every playlist you own")
-    shuffle_all.add_argument(
-        "--ignore",
-        action="append",
-        default=None,  # argparse appends INTO a list default, leaking across parses
-        help="Playlists to skip: links, IDs, or partial names (repeatable or comma-separated)",
-    )
-    shuffle_all.set_defaults(func=cmd_shuffle_all)
 
     # -- playback (requires Spotify Premium) --
     sub.add_parser("now", help="Show playback state and available devices").set_defaults(
@@ -380,15 +353,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     delete.add_argument("playlist", help="Playlist link, URI, or ID")
     delete.set_defaults(func=cmd_delete_playlist)
-
-    restore = sub.add_parser("restore", help="Restore a playlist from a recovery snapshot")
-    restore.add_argument("snapshot", help="Path to a snapshot JSON from ~/.spotify-mcp/recovery/")
-    restore.add_argument(
-        "--force",
-        action="store_true",
-        help="Restore even if the playlist gained tracks after the snapshot (they are removed)",
-    )
-    restore.set_defaults(func=cmd_restore)
 
     liked = sub.add_parser("liked-to-playlist", help="Copy all liked songs into a playlist")
     liked.add_argument("target", help="Target playlist (link, URI, or ID)")

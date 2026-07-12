@@ -5,7 +5,6 @@ from spotify_mcp.mcp.server import build_server
 EXPECTED_TOOLS = {
     # reads
     "user_profile",
-    "currently_playing",
     "playlists",
     "playlist_items",
     "search",
@@ -40,7 +39,6 @@ def test_server_registers_exactly_the_expected_tools():
     server = build_server()
     tools = asyncio.run(server.list_tools())
     assert {tool.name for tool in tools} == EXPECTED_TOOLS
-    assert len(tools) == 24
 
 
 def test_every_tool_has_a_description():

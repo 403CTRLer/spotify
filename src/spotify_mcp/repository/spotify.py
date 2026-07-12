@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from typing import Any, Protocol
 
 from spotify_mcp.client.api_client import SpotifyApiClient
-from spotify_mcp.models.schemas import NowPlaying, Page, PlayedItem, Playlist, Track, User
+from spotify_mcp.models.schemas import Page, PlayedItem, Playlist, Track, User
 
 PLAYLIST_CHUNK = 100  # Spotify limit for playlist item writes
 SAVED_CHUNK = 50  # Spotify limit for saved-track writes
@@ -43,22 +43,23 @@ class SpotifyRepository(Protocol):
     """Provider-facing data access. Services depend on this, never on HTTP."""
 
     def me(self) -> User: ...
-    def currently_playing(self) -> NowPlaying | None: ...
     def my_playlists(self, limit: int = 50, offset: int = 0) -> Page[Playlist]: ...
     def all_my_playlists(self) -> list[Playlist]: ...
     def get_playlist(self, playlist_id: str) -> Playlist: ...
+    def playlist_snapshot_id(self, playlist_id: str) -> str: ...
     def playlist_items(
         self, playlist_id: str, limit: int = 100, offset: int = 0
     ) -> Page[Track]: ...
-    def all_playlist_uris(self, playlist_id: str) -> tuple[list[str], list[str]]: ...
-    def album_track_uris(self, album_id: str) -> list[str]: ...
+    def all_playlist_uris(self, playlist_id: str) -> list[str]: ...
     def search(self, query: str, types: Sequence[str], limit: int = 10) -> dict[str, Any]: ...
     def create_playlist(
         self, name: str, description: str = "", public: bool = False
     ) -> Playlist: ...
     def add_items(self, playlist_id: str, uris: Sequence[str]) -> int: ...
     def remove_items(self, playlist_id: str, uris: Sequence[str]) -> int: ...
-    def replace_items(self, playlist_id: str, uris: Sequence[str]) -> None: ...
+    def reorder_playlist(
+        self, playlist_id: str, range_start: int, insert_before: int, snapshot_id: str
+    ) -> str: ...
     def saved_tracks(self, limit: int = 50, offset: int = 0) -> Page[Track]: ...
     def all_saved_ids(self) -> list[str]: ...
     def save_tracks(self, track_ids: Sequence[str]) -> int: ...
@@ -103,16 +104,6 @@ class SpotifyApiRepository:
     def me(self) -> User:
         return User.model_validate(self._client.get("/me"))
 
-    def currently_playing(self) -> NowPlaying | None:
-        data = self._client.get("/me/player/currently-playing")
-        if not data or not data.get("item"):
-            return None
-        return {
-            "is_playing": bool(data.get("is_playing")),
-            "progress_ms": data.get("progress_ms"),
-            "track": Track.from_api(data["item"]),
-        }
-
     def my_playlists(self, limit: int = 50, offset: int = 0) -> Page[Playlist]:
         data = self._client.get("/me/playlists", limit=_clamp(limit, 50), offset=offset)
         return {
@@ -126,6 +117,12 @@ class SpotifyApiRepository:
 
     def get_playlist(self, playlist_id: str) -> Playlist:
         return Playlist.from_api(self._client.get(f"/playlists/{playlist_id}"))
+
+    def playlist_snapshot_id(self, playlist_id: str) -> str:
+        """Transient optimistic-concurrency token for write workflows; not part
+        of the Playlist domain model."""
+        data = self._client.get(f"/playlists/{playlist_id}", fields="snapshot_id") or {}
+        return data.get("snapshot_id") or ""
 
     def playlist_items(self, playlist_id: str, limit: int = 100, offset: int = 0) -> Page[Track]:
         data = self._client.get(
@@ -141,29 +138,16 @@ class SpotifyApiRepository:
             ],
         }
 
-    def all_playlist_uris(self, playlist_id: str) -> tuple[list[str], list[str]]:
-        """Returns (streamable_uris, skipped) where skipped describes local and
-        null/unavailable tracks the Web API cannot re-add."""
+    def all_playlist_uris(self, playlist_id: str) -> list[str]:
+        """Streamable track URIs. Local/unavailable entries are excluded: the
+        Web API cannot re-ADD them, so they are unusable for additive callers
+        (in-place reorders never touch this method)."""
         uris: list[str] = []
-        skipped: list[str] = []
         for item in self._client.paginate(f"/playlists/{playlist_id}/tracks", limit=100):
-            raw = (item or {}).get("track")
-            if not raw:
-                skipped.append("unavailable track (removed from catalog)")
-                continue
-            track = Track.from_api(raw)
-            if track.is_local or not track.uri:
-                skipped.append(track.uri or track.name or "unknown local track")
-                continue
-            uris.append(track.uri)
-        return uris, skipped
-
-    def album_track_uris(self, album_id: str) -> list[str]:
-        return [
-            t["uri"]
-            for t in self._client.paginate(f"/albums/{album_id}/tracks", limit=50)
-            if t and t.get("uri")
-        ]
+            track = Track.from_api((item or {}).get("track") or {})
+            if track.uri and not track.is_local:
+                uris.append(track.uri)
+        return uris
 
     def search(self, query: str, types: Sequence[str], limit: int = 10) -> dict[str, Any]:
         data = (
@@ -204,12 +188,20 @@ class SpotifyApiRepository:
             )
         return len(uris)
 
-    def replace_items(self, playlist_id: str, uris: Sequence[str]) -> None:
-        """Replace playlist contents: PUT the first chunk, append the rest."""
-        head, rest = uris[:PLAYLIST_CHUNK], uris[PLAYLIST_CHUNK:]
-        self._client.put(f"/playlists/{playlist_id}/tracks", json={"uris": list(head)})
-        for chunk in _chunks(rest, PLAYLIST_CHUNK):
-            self._client.post(f"/playlists/{playlist_id}/tracks", json={"uris": list(chunk)})
+    def reorder_playlist(
+        self, playlist_id: str, range_start: int, insert_before: int, snapshot_id: str
+    ) -> str:
+        """Move one item in place (atomic reorder). Returns the new snapshot_id."""
+        data = self._client.put(
+            f"/playlists/{playlist_id}/tracks",
+            json={
+                "range_start": range_start,
+                "insert_before": insert_before,
+                "range_length": 1,
+                "snapshot_id": snapshot_id,
+            },
+        )
+        return (data or {}).get("snapshot_id") or snapshot_id
 
     def saved_tracks(self, limit: int = 50, offset: int = 0) -> Page[Track]:
         data = self._client.get("/me/tracks", limit=_clamp(limit, 50), offset=offset)

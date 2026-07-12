@@ -3,12 +3,8 @@ from spotify_mcp.models.schemas import Track
 
 
 class StubService:
-    def __init__(self, now=None):
-        self.now = now
+    def __init__(self):
         self.search_args = None
-
-    def currently_playing(self):
-        return self.now
 
     def search(self, query, types, limit):
         self.search_args = (query, types, limit)
@@ -16,20 +12,6 @@ class StubService:
 
     def recently_played(self, limit=20):
         return [{"played_at": "2026-07-11T00:00:00Z", "track": Track(id=None, uri="u", name="n")}]
-
-
-def test_currently_playing_idle_returns_message(monkeypatch):
-    # review #15: the 204 branch is real logic and was untested
-    monkeypatch.setattr(tools, "get_service", lambda: StubService(now=None))
-    assert tools.currently_playing() == "Nothing is playing."
-
-
-def test_currently_playing_dumps_track_model(monkeypatch):
-    now = {"is_playing": True, "progress_ms": 5, "track": Track(id=None, uri="u", name="Song")}
-    monkeypatch.setattr(tools, "get_service", lambda: StubService(now=now))
-    result = tools.currently_playing()
-    assert isinstance(result, dict)
-    assert result["track"]["name"] == "Song"  # dumped to plain dict at the boundary
 
 
 def test_search_defaults_to_track_type(monkeypatch):
@@ -56,8 +38,8 @@ class ConfirmStubService:
         self.mutations.append(("delete", ref))
         return "Mix"
 
-    def shuffle_playlist(self, ref, force=False):
-        self.mutations.append(("shuffle", ref, force))
+    def shuffle_playlist(self, ref):
+        self.mutations.append(("shuffle", ref))
         return 42
 
 
@@ -85,11 +67,11 @@ def test_shuffle_playlist_requires_confirmation(monkeypatch):
     assert stub.mutations == []
 
 
-def test_shuffle_playlist_confirmed_passes_force_through(monkeypatch):
+def test_shuffle_playlist_confirmed_executes(monkeypatch):
     stub = ConfirmStubService()
     monkeypatch.setattr(tools, "get_service", lambda: stub)
-    assert "Shuffled 42 tracks" in tools.shuffle_playlist("p" * 22, confirm=True, force=True)
-    assert stub.mutations == [("shuffle", "p" * 22, True)]
+    assert "Shuffled 42 tracks" in tools.shuffle_playlist("p" * 22, confirm=True)
+    assert stub.mutations == [("shuffle", "p" * 22)]
 
 
 def test_top_items_rejects_unknown_kind(monkeypatch):

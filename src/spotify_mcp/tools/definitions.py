@@ -20,7 +20,7 @@ from spotify_mcp.services.service import SpotifyService
 def get_service() -> SpotifyService:
     settings = Settings.from_env()
     repo = SpotifyApiRepository(SpotifyApiClient(SpotifyAuth(settings)))
-    return SpotifyService(repo, recovery_dir=settings.recovery_dir)
+    return SpotifyService(repo)
 
 
 def _page(page: Mapping[str, Any]) -> dict[str, Any]:
@@ -34,18 +34,6 @@ def _page(page: Mapping[str, Any]) -> dict[str, Any]:
 def user_profile() -> dict[str, Any]:
     """Get the authenticated user's profile (id and display name)."""
     return get_service().me().model_dump()
-
-
-def currently_playing() -> dict[str, Any] | str:
-    """Get the currently playing track, or a message when nothing is playing."""
-    now = get_service().currently_playing()
-    if not now:
-        return "Nothing is playing."
-    return {
-        "is_playing": now["is_playing"],
-        "progress_ms": now["progress_ms"],
-        "track": now["track"].model_dump(),
-    }
 
 
 def playlists(limit: int = 50, offset: int = 0) -> dict[str, Any]:
@@ -206,27 +194,26 @@ def delete_playlist(playlist: str, confirm: bool = False) -> str:
     return f"Deleted playlist {name!r}."
 
 
-def shuffle_playlist(playlist: str, confirm: bool = False, force: bool = False) -> str:
-    """Persistently shuffle a playlist's track order. DESTRUCTIVE to ordering:
-    call once without confirm for a preview, then with confirm=true. A full
-    recovery snapshot is written before any change. Playlists containing local
-    tracks are refused unless force=true (those tracks would be lost)."""
+def shuffle_playlist(playlist: str, confirm: bool = False) -> str:
+    """Shuffle a playlist's track order by reordering items IN PLACE - no
+    track is ever removed or re-added, so nothing can be lost. DESTRUCTIVE to
+    ordering: call once without confirm for a preview, then with confirm=true.
+    Costs about one API request per track, so large playlists take a while."""
     service = get_service()
     target = service.get_playlist(playlist)
     if not confirm:
         return (
             f"CONFIRMATION REQUIRED: this will permanently reorder all "
-            f"{target.total_tracks} tracks of {target.name!r}. A recovery snapshot "
-            "is written first. No changes were made. Call shuffle_playlist again "
-            "with confirm=true to proceed."
+            f"{target.total_tracks} tracks of {target.name!r} (the previous order "
+            "is not recoverable; the tracks themselves are never removed). "
+            "No changes were made. Call shuffle_playlist again with confirm=true to proceed."
         )
-    count = service.shuffle_playlist(playlist, force=force)
-    return f"Shuffled {count} tracks of {target.name!r}. Recovery snapshot removed after success."
+    count = service.shuffle_playlist(playlist)
+    return f"Shuffled {count} tracks of {target.name!r} in place."
 
 
 ALL_TOOLS = [
     user_profile,
-    currently_playing,
     playlists,
     playlist_items,
     search,
